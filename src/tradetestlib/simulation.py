@@ -152,7 +152,13 @@ class Simulation:
         
         self.hold_time = hold_time
         self.orders = orders
-
+        
+        #self.element = mt5.symbol_info(self.symbol)._asdict()
+        #self.contract_size = self.element['trade_contract_size']
+        #self.trade_point = self.element['point'] # num ticks
+        #self.trade_tick = self.element['trade_tick_value'] # value per tick in USD per 1 standard lot
+        #self.spread = self.element['spread'] if self.element['spread'] != 0 else 1# approximation calculated from weekend spread
+        
         self.contract_size, self.trade_point, self.trade_tick, self.spread = self.request_mt5_symbol_info(self.symbol)
         
         
@@ -255,7 +261,6 @@ class Simulation:
     @staticmethod
     def request_mt5_symbol_info(symbol):
         try:
-            
             element = mt5.symbol_info(symbol)._asdict()
             contract_size = element['trade_contract_size']
             trade_point = element['point'] # num ticks
@@ -264,7 +269,7 @@ class Simulation:
 
             return contract_size, trade_point, trade_tick, spread
         
-        except:
+        except AttributeError:
             return 100000, 0.00001, 1, 1 
             
         
@@ -447,8 +452,8 @@ class Simulation:
         
         
         # filters signals only if long or short orders are allowed
-        data['signal'].loc[data['signal'] == -1] = 0 if self.orders == 'long' else -1
-        data['signal'].loc[data['signal'] == 1] = 0 if self.orders == 'short' else 1
+        data.loc[data['signal'] == -1, 'signal'] = 0 if self.orders == 'long' else -1
+        data.loc[data['signal'] == 1, 'signal'] = 0 if self.orders == 'short' else 1
         
         
 
@@ -465,8 +470,8 @@ class Simulation:
         data['close_price'] = data['close'].shift(periods = -(self.hold_time - 1)) if self.hold_time > 0 else data['close']
         
         data['trade_diff'] = 0
-        data['trade_diff'].loc[data['signal'] !=0 ] = abs(data['close_price'] - data['open'])
-        data['trade_diff'].loc[data['signal'] != data['true_signal']] = data['trade_diff'] * -1
+        data.loc[data['signal'] !=0, 'trade_diff'] = abs(data['close_price'] - data['open'])
+        data.loc[data['signal'] != data['true_signal'], 'trade_diff'] = data['trade_diff'] * -1
         
 
         data['lowest'] = data['low'].rolling(self.hold_time).min().shift(1-self.hold_time)
@@ -485,28 +490,28 @@ class Simulation:
         
         ## === RAW PROFIT === ##
         data['raw_profit'] = data['trade_diff'] * (1 / self.trade_point) * data['lot'] * self.trade_tick
-        data['raw_profit'].loc[(data['raw_profit'] < 0) & (data['raw_profit'] < -self.max_loss)] = -self.max_loss
+        data.loc[(data['raw_profit'] < 0) & (data['raw_profit'] < -self.max_loss), 'raw_profit'] = -self.max_loss
         data['raw_stop_diff'] = 0
         data['raw_stop_diff'] = np.where(data['signal'] == 1, abs(data['lowest_trade_diff']), abs(data['raw_stop_diff']))
         data['raw_stop_diff'] = np.where(data['signal'] == -1, abs(data['highest_trade_diff']), abs(data['raw_stop_diff']))
         data['raw_dd'] = -abs(data['raw_stop_diff']) * (1 / self.trade_point) * data['lot'] * self.trade_tick
-        data['raw_profit'].loc[(data['raw_dd'] < -self.max_loss)] = -self.max_loss
+        data.loc[(data['raw_dd'] < -self.max_loss), 'raw_profit'] = -self.max_loss
         
         data['running_raw'] = data['raw_profit'].cumsum()
         data['raw_balance'] = data['running_raw'] + self.starting_balance
-        data['raw_balance'][0] = self.starting_balance
+        data.loc[data.index == data.index[0], 'raw_balance'] = self.starting_balance
         ## === RAW PROFIT === ##
         
         ## === SPREAD ADJUSTED PROFIT === ##
         data['spread_adj_trade_diff'] = data['trade_diff'] - data['spread_factor']
         data['spread_adjusted_profit'] = (data['spread_adj_trade_diff']) * (1 / self.trade_point) * data['lot'] * self.trade_tick
-        data['spread_adjusted_profit'].loc[(data['spread_adjusted_profit'] < 0) & (data['spread_adjusted_profit'] < -self.max_loss)] = -self.max_loss
+        data.loc[(data['spread_adjusted_profit'] < 0) & (data['spread_adjusted_profit'] < -self.max_loss), 'spread_adjusted_profit'] = -self.max_loss
         data['spread_adj_trade_points'] = abs(data['spread_adj_trade_diff']) * (1 / self.trade_point)
         data['spread_adj_stop_diff'] = 0
         data['spread_adj_stop_diff'] = np.where(data['signal'] == 1, abs(data['lowest_trade_diff']), abs(data['spread_adj_stop_diff']))
         data['spread_adj_stop_diff'] = np.where(data['signal'] == -1, abs(data['highest_trade_diff']), abs(data['spread_adj_stop_diff']))
         data['spread_adj_dd'] = -abs(data['spread_adj_stop_diff']) * (1 / self.trade_point) * data['lot'] * self.trade_tick
-        data['spread_adjusted_profit'].loc[(data['spread_adj_dd'] < -self.max_loss)] = -self.max_loss
+        data.loc[(data['spread_adj_dd'] < -self.max_loss), 'spread_adjusted_profit'] = -self.max_loss
         data['running_spread_adj'] = data['spread_adjusted_profit'].cumsum()
         data['spread_adj_balance'] = data['running_spread_adj'] + self.starting_balance
         ## === SPREAD ADJUSTED PROFIT === ##
@@ -516,14 +521,14 @@ class Simulation:
         data['running_profit'] = data['net_profit'].cumsum()
         data['running_profit_pct'] = data['running_profit'].pct_change() * 100
         data['balance'] = data['running_profit'] + self.starting_balance
-        data['balance'][0] = self.starting_balance
+        data.loc[data.index == data.index[0], 'balance'] = self.starting_balance
         data['composition'] = ((data['raw_profit'] - data['net_profit']) / data['raw_profit']) * 100
         ## === NET PROFIT === ##
         
         balance_cols = ['balance','spread_adj_balance','raw_balance']
         
         for b in balance_cols:
-            data[b].loc[data[b] < 0] = 0
+            data.loc[data[b] < 0, b] = 0
         
         
         data['running_pct_gain'] = (data['balance'].pct_change() * 100).cumsum()
