@@ -6,9 +6,9 @@ from src.tradetestlib import *
 def sim():
     symbol = 'CHFSGD'
     tf = 'm5'
-    train_data = pd.read_csv('./tradetestlib/tests/train.csv', index_col = 'time')
+    train_data = pd.read_csv('./tests/train.csv', index_col = 'time')
     train_data.index = pd.to_datetime(train_data.index)
-    test_data = pd.read_csv('./tradetestlib/tests/test.csv', index_col = 'time')
+    test_data = pd.read_csv('./tests/test.csv', index_col = 'time')
     test_data.index = pd.to_datetime(test_data.index)
 
     return Simulation(symbol = symbol,

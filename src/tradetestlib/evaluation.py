@@ -171,9 +171,6 @@ class Evaluation:
     commission_composition:
         average percentage of commission to average profitable trades
         
-    signal_accuracy:
-        signal accuracy to true signal
-        
         
     """
     def __init__(self, data: pd.DataFrame, hyperparameters: dict):
@@ -246,7 +243,7 @@ class Evaluation:
         
         # Periodic Return (for calculating sharpe ratio)
         self.daily_return = self.net_profit_pct / days
-        self.monthly_return = self.net_profit_pct / days / 30
+        self.monthly_return = self.daily_return * 30
         
         # Order statistics (long and short), amount, and performance
         self.long_positions = data.loc[(long_signal_mask) & (data['net_profit'] != 0)]['net_profit'].count()
@@ -277,16 +274,10 @@ class Evaluation:
         # Commission composition: Percentage lost due to transaction costs
         self.commission_composition = ((data['commission'].max()*2) / self.avg_win_usd) * 100
         
-        # Signal accuracy
-        to_test = data.loc[data['signal'] != 0]
-        all_signals = to_test['match'].count()
-        match_count = to_test[to_test['match'] == 1]['match'].count()
-        self.signal_accuracy = (match_count / all_signals) * 100
         
         self.evaluation_data = {
             'start_date' : self.start_date, 
             'end_date' : self.end_date, 
-            'signal_accuracy' : self.signal_accuracy, 
             'starting_balance' : self.starting_balance, 
             'end_balance' : self.end_balance, 
             'mean_profit_points' : self.mean_profit_points, 
