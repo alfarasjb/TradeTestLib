@@ -56,7 +56,13 @@ class Simulation:
         
     show_properties: bool
         prints backtest properties 
+
+    filter_by: str
+        filtering method used for time interval optimization
         
+    num_elements: int 
+        number of elements to use for interval filtering, ranked from best to worst performance
+    
     Methods
     -------
     print_backtest_properties()
@@ -106,6 +112,9 @@ class Simulation:
         
     select_dataset()
         Helper function for selecting dataset. Primarily used for plotting
+
+    filter_default()
+        Helper function for identifying filtering method
     """
     
     def __init__(self, 
@@ -119,7 +128,9 @@ class Simulation:
                  max_loss_pct: float = None,
                  hold_time: int = 1, 
                  orders:str = 'all',
-                 show_properties: bool = True
+                 show_properties: bool = True,
+                 filter_by: str = None,
+                 num_elements: int = 10,
                 ):
         
         self.timeframes = ['m1','m5','m15','m30','h1','h4','d1']
@@ -147,23 +158,20 @@ class Simulation:
         self.lot = lot
         self.starting_balance = starting_balance
         self.commission = (commission * self.lot) * 2
-        self.max_loss_pct = max_loss_pct if max_loss_pct is not None else 0.01
+        self.max_loss_pct = max_loss_pct if max_loss_pct is not None else 1
         self.max_loss = self.max_loss_pct * self.starting_balance
         
         self.hold_time = hold_time
         self.orders = orders
         
-        #self.element = mt5.symbol_info(self.symbol)._asdict()
-        #self.contract_size = self.element['trade_contract_size']
-        #self.trade_point = self.element['point'] # num ticks
-        #self.trade_tick = self.element['trade_tick_value'] # value per tick in USD per 1 standard lot
-        #self.spread = self.element['spread'] if self.element['spread'] != 0 else 1# approximation calculated from weekend spread
-        
         self.contract_size, self.trade_point, self.trade_tick, self.spread = self.request_mt5_symbol_info(self.symbol)
         
         
         self.show_properties = show_properties
-        
+
+        self.filter_by = self.filter_default(self.timeframe) if filter_by is None else filter_by
+        self.num_elements = num_elements
+
         if self.show_properties:
             self.print_backtest_properties()
         
@@ -215,27 +223,28 @@ class Simulation:
         
         """
 
-        self.train_data = self.build_dataframe(self.train_raw)
+        self.train_data = self.build_dataframe(self.train_raw.copy())
         self.train_evaluation = Evaluation(self.train_data, self.hyperparameters)
         self.train_summary = self.summary(self.train_evaluation, 'train')
         
-        self.test_data = self.build_dataframe(self.test_raw)
+        self.test_data = self.build_dataframe(self.test_raw.copy())
         self.test_evaluation = Evaluation(self.test_data, self.hyperparameters)
         self.test_summary = self.summary(self.test_evaluation, 'test')
         
-        self.combined = self.build_dataframe(pd.concat([self.train_data, self.test_data], axis = 0))        
+        self.combined = self.build_dataframe(pd.concat([self.train_raw.copy(), self.test_raw.copy()], axis = 0))
         self.combined_evaluation = Evaluation(self.combined, self.hyperparameters)
         self.combined_summary = self.summary(self.combined_evaluation, 'combined')
         
-        self.train_filtered = self.build_dataframe(self.train_raw, filtered = True)
+        self.train_filtered = self.build_dataframe(self.train_raw.copy(), filtered = True)
         self.train_filtered_evaluation = Evaluation(self.train_filtered, self.hyperparameters)
         self.train_filtered_summary = self.summary(self.train_filtered_evaluation, 'train_filtered')
         
-        self.test_filtered = self.build_dataframe(self.test_raw, filtered = True)
+        self.test_filtered = self.build_dataframe(self.test_raw.copy(), filtered = True)
         self.test_filtered_evaluation = Evaluation(self.test_filtered, self.hyperparameters)
         self.test_filtered_summary = self.summary(self.test_filtered_evaluation, 'test_filtered')
+    
         
-        self.combined_filtered = self.build_dataframe(pd.concat([self.train_data, self.test_data], axis = 0), filtered = True)
+        self.combined_filtered = self.build_dataframe(pd.concat([self.train_raw.copy(), self.test_raw.copy()], axis = 0), filtered = True)
         self.combined_filtered_evaluation = Evaluation(self.combined_filtered, self.hyperparameters)
         self.combined_filtered_summary = self.summary(self.combined_filtered_evaluation, 'combined_filtered')
         
@@ -293,13 +302,6 @@ class Simulation:
         signal
             strategy signal
             1: long, -1: short
-        
-        true_signal
-            true trade outcome
-            1: long, -1: short
-            
-        match
-            1: if signal matches true_signal, indicating a correct prediction
         
         valid
             1: if valid, 0: if invalid
@@ -437,14 +439,28 @@ class Simulation:
             return 
         
         if filtered:
-            trading_hours = self.best_interval_by_cost_delta().index.tolist()
+            trading_hours = self.best_interval_by_cost_delta(self.num_elements).index.tolist()
         else:
             trading_hours = []
         
 
-        data['match'] = data['signal'] * data['true_signal']
         
-        data['valid'] = data.index.hour.isin(trading_hours).astype('int') if len(trading_hours) > 0 else 1
+        if len(trading_hours) > 0:
+            data['valid'] = 0
+            
+            if self.filter_by == 'hour':
+                #data['valid'] = data.index.hour.isin(trading_hours).astype('int')
+                data.loc[(data.index.hour.isin(trading_hours)), 'valid'] = 1
+            elif self.filter_by == 'day_of_week':
+                data.loc[(data.index.dayofweek.isin(trading_hours)), 'valid'] = 1
+            else:
+                raise ValueError('Invalid Filter')
+            
+        else: 
+            data['valid'] = 1
+
+        # This is working
+        #data['valid'] = data.index.hour.isin(trading_hours).astype('int') if len(trading_hours) > 0 else 1
         
         
         # modifies signal depending on trade validity
@@ -458,8 +474,7 @@ class Simulation:
         
 
         data['pct_change'] = data['close'].pct_change() * 100
-        data['strategy_returns'] = data['pct_change'] * data['signal']
-        data['true_returns'] = data['pct_change'] * data['true_signal'] 
+        #data['strategy_returns'] = data['pct_change'] * data['signal']
         
         data['commission'] = np.where(data['signal'] != 0, self.commission, 0)
         
@@ -471,7 +486,12 @@ class Simulation:
         
         data['trade_diff'] = 0
         data.loc[data['signal'] !=0, 'trade_diff'] = abs(data['close_price'] - data['open'])
-        data.loc[data['signal'] != data['true_signal'], 'trade_diff'] = data['trade_diff'] * -1
+
+        data.loc[(data['close_price'] > data['open']) & (data['signal'] == -1), 'trade_diff']  = data['trade_diff'] * -1
+        data.loc[(data['close_price'] < data['open']) & (data['signal'] == 1), 'trade_diff'] = data['trade_diff'] * -1
+        data['match'] = 0 
+        data.loc[data['trade_diff'] > 0, 'match'] = 1
+        data.loc[data['trade_diff'] < 0, 'match'] = -1
         
 
         data['lowest'] = data['low'].rolling(self.hold_time).min().shift(1-self.hold_time)
@@ -710,7 +730,7 @@ class Simulation:
         
         data = self.select_dataset(dataset)
         
-        grouped = data.groupby('hour')[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum()
+        grouped = data.groupby(self.filter_by)[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum()
         
         grouped.plot(kind = 'bar', figsize = (12, 5))
         plt.legend(labels = ['Raw Profit','Spread Adjusted Profit', 'Transaction Costs', 'Cost Adjusted Profit'])
@@ -755,12 +775,12 @@ class Simulation:
         """
         
         dataset = self.train_data.copy()
-        grouped = dataset.groupby('hour')[['net_profit']].mean()
+        grouped = dataset.groupby(self.filter_by)[['net_profit']].mean()
         best_results_df = grouped.loc[grouped['net_profit'] > 0].sort_values(by = 'net_profit', ascending = False)
         
         return best_results_df
     
-    def best_interval_by_cost_delta(self):
+    def best_interval_by_cost_delta(self, num_elements: int):
         """
         Builds a dataframe of best performing time intervals. 
         
@@ -778,12 +798,12 @@ class Simulation:
         
         dataset = self.train_data.copy()
         
-        cost_df = dataset.groupby('hour')[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum()
+        cost_df = dataset.groupby(self.filter_by)[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum()
         cost_df['cost_diff'] = cost_df['net_profit'] - cost_df['commission']
         best_results_df = cost_df[['cost_diff']].loc[(cost_df['cost_diff'] > 0) & (cost_df['net_profit'] > 0)].sort_values(by='cost_diff', ascending = False)
         self.cost_df = cost_df.copy()
         
-        return best_results_df
+        return best_results_df[:num_elements]
     
     def plot_returns_distribution(self, dataset:str = 'train'):
         """
@@ -829,3 +849,26 @@ class Simulation:
         
         else:
             raise ValueError('Invalid Dataset type. Use: train, test, combined, train_filtered, test_filtered')
+
+    @staticmethod
+    def filter_default(timeframe: str):
+        """
+        Helper function for identifying grouping timeframes
+
+        Parameters
+        ----------
+        timeframe: str
+            timeframe in test
+        """
+        minutes_tf = ['m1','m5','m15','m30']
+        hours_tf = ['h1','h4']
+        htf = ['d1','w1','mn1']
+
+        if timeframe in minutes_tf:
+            return 'hour'
+        elif timeframe in hours_tf:
+            return 'hour'
+        elif timeframe in htf:
+            return 'day_of_week'
+        else:
+            raise ValueError('Invalid Timeframe')

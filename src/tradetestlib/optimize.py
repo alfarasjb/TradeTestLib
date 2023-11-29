@@ -1,7 +1,7 @@
 import pandas as pd 
 import numpy as np 
 from tradetestlib.simulation import Simulation
-from tqdm import tqdm
+from tqdm import tqdm 
 from itertools import product 
 
 class Optimize:
