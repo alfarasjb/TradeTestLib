@@ -6,6 +6,7 @@
 
 Currently, hyperparameters are limited to position sizing, and exposure. 
 
+A demonstration can be found [here](https://github.com/alfarasjb/Alpha-Research/blob/main/backtest_demo/backtest_demo.ipynb)
 
 ## Usage
 A simulation instances can be created by calling the Simulation class. 
