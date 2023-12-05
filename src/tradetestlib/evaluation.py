@@ -1,5 +1,5 @@
 import pandas as pd
-
+import numpy as np
 
 class Evaluation:
     """
@@ -202,15 +202,15 @@ class Evaluation:
         self.starting_balance = data[:1]['balance'].item()
         self.end_balance = data[-1:]['balance'].item()
         
-        # Recorded spread
-        self.spread = data[:1]['spread'].item()
+        # Recorded spread (mean spread for opened trades)
+        self.spread = data.loc[profit_mask]['spread'].mean()
         
         # Mean points
         self.mean_profit_points = data.loc[profit_mask]['spread_adj_trade_points'].mean()
         self.mean_loss_points = data.loc[loss_mask]['spread_adj_trade_points'].mean()
         
         # Points to spread ratio
-        self.pts_to_spread = self.mean_profit_points / self.spread
+        self.pts_to_spread = self.mean_profit_points / self.spread if self.spread > 0 else np.inf
         
         # Hyperparameters: lotsize, hold time, max loss pct
         self.lot = self.hyperparameters['lot']
@@ -230,11 +230,14 @@ class Evaluation:
         
         # Trade result statistics: Average p/l, max p/l, flat amount and pct
         self.avg_win_usd = data.loc[profit_mask]['net_profit'].mean()
+        self.median_win_usd = data.loc[profit_mask]['net_profit'].median()
         self.avg_loss_usd = data.loc[loss_mask]['net_profit'].mean()
+        self.median_loss_usd = data.loc[loss_mask]['net_profit'].median()
         self.max_profit_usd = data['net_profit'].max()
         self.max_loss_usd = data['net_profit'].min()        
         self.max_profit_pct = (self.max_profit_usd / self.starting_balance) * 100
         self.max_loss_pct = (self.max_loss_usd / self.starting_balance) * 100
+        self.returns_vol = data.loc[data['net_profit'] != 0]['net_profit'].std()
         
         # Gross and net profit
         self.gross_profit = data.loc[data['net_profit'] > 0]['net_profit'].sum()
@@ -244,6 +247,7 @@ class Evaluation:
         # Periodic Return (for calculating sharpe ratio)
         self.daily_return = self.net_profit_pct / days
         self.monthly_return = self.daily_return * 30
+        self.annual_return = self.monthly_return * 12
         
         # Order statistics (long and short), amount, and performance
         self.long_positions = data.loc[(long_signal_mask) & (data['net_profit'] != 0)]['net_profit'].count()
@@ -259,14 +263,19 @@ class Evaluation:
         
         # sharpe ratio - approximated from current 10y yield
         tbill_rate = 4.47 # 10 year as of 11/25/2023
-        years = 10
-        tbill_per_day = (tbill_rate / years / 365 / 100) # 250 trading days approx, and converted to decimal
-        roi_per_day = (self.net_profit / self.starting_balance) / days
-        sdev_ret = (data['net_profit'] / self.starting_balance).std()
-        risk_free_rate = tbill_per_day
-        self.sharpe_ratio = (roi_per_day - risk_free_rate) / sdev_ret
+        sdev_ret = (data.loc[data['net_profit'] != 0, 'net_profit'] / self.starting_balance).std()
+        
+        risk_free_rate = tbill_rate / 100
+        
+        roi = self.annual_return / 100
+        self.sharpe_ratio = (roi - risk_free_rate) / sdev_ret
+
+        # expectancy
+        # (average gain * win%) - (average loss * loss%)
+        self.expectancy = ((self.avg_win_usd * (self.win_rate/100))) - (abs(self.avg_loss_usd) * (1 - (self.win_rate / 100)))
         
         # Overall performance: profit factor, maxdd, avg rrr 
+        
         self.profit_factor = abs((self.avg_win_usd * self.win_rate) / ((1 - self.win_rate) * self.avg_loss_usd))
         self.max_dd_pct = data['drawdown'].max()
         self.avg_rrr = abs(self.avg_win_usd / self.avg_loss_usd)
@@ -300,12 +309,16 @@ class Evaluation:
             'gross_profit' : self.gross_profit,
             'net_profit' : self.net_profit,
             'net_profit_pct' : self.net_profit_pct, 
+            'returns_vol' : self.returns_vol,
             'daily_return' : self.daily_return,
             'monthly_return' : self.monthly_return,
+            'annual_return' : self.annual_return,
             'max_profit_usd' : self.max_profit_usd,
             'max_profit_pct' : self.max_profit_pct,
             'max_loss_usd' : self.max_loss_usd,
             'max_loss_pct' : self.max_loss_pct,
+            'median_profit_usd' : self.median_win_usd,
+            'median_loss_usd' : self.median_loss_usd,
             'num_longs' : self.long_positions,
             'pct_longs' : self.pct_long,
             'long_wins' : self.long_wins,
@@ -318,6 +331,7 @@ class Evaluation:
             'short_avg_win' : self.short_avg_win,
             'profit_factor' : self.profit_factor,  
             'sharpe_ratio' : self.sharpe_ratio,
+            'expectancy' : self.expectancy,
             'max_dd_pct' : self.max_dd_pct,
             'avg_rrr' : self.avg_rrr,
             'commission_composition' : self.commission_composition
