@@ -131,6 +131,11 @@ class Simulation:
                  show_properties: bool = True,
                  filter_by: str = None,
                  num_elements: int = 10,
+                 spread: int = None,
+                 exclude_time: list = [],
+                 trade_time: list = [],
+                 trading_window_start: int = None, 
+                 trading_window_end: int = None
                 ):
         
         self.timeframes = ['m1','m5','m15','m30','h1','h4','d1']
@@ -142,6 +147,9 @@ class Simulation:
         assert commission >= 0, 'Invalid Commission'
         assert hold_time >= 0, 'Invalid Hold Time'
         assert orders in self.valid_orders, 'Invalid Orders'
+
+        if len(exclude_time) != 0 and len(trade_time) != 0:
+            raise ValueError('Conflicting trading sessions. Specifying both exclude_time and trade_time is not allowed.')
         
         self.symbol = symbol
         self.timeframe = timeframe
@@ -151,6 +159,9 @@ class Simulation:
         """
         self.train_raw = train_raw.copy()
         self.test_raw = test_raw.copy()
+
+        self.train_raw.columns = [tr.lower() for tr in self.train_raw.columns]
+        self.test_raw.columns = [te.lower() for te in self.test_raw.columns]
         
         """
         Trade Parameters
@@ -165,8 +176,15 @@ class Simulation:
         self.orders = orders
         
         self.contract_size, self.trade_point, self.trade_tick, self.spread = self.request_mt5_symbol_info(self.symbol)
+        self.spread = spread if spread is not None else self.spread
         
+        self.exclude_time = exclude_time # time in format "HH:MM" to exclude trading activity 
+        self.trade_time = trade_time # time in format "HH:MM" to trade only this 
         
+        self.trading_window_start = trading_window_start
+        self.trading_window_end = trading_window_end
+ 
+
         self.show_properties = show_properties
 
         self.filter_by = self.filter_default(self.timeframe) if filter_by is None else filter_by
@@ -279,6 +297,7 @@ class Simulation:
             return contract_size, trade_point, trade_tick, spread
         
         except AttributeError:
+            print('MT5 is not running. Run mt5.initialize()')
             return 100000, 0.00001, 1, 1 
             
         
@@ -462,11 +481,29 @@ class Simulation:
         # This is working
         #data['valid'] = data.index.hour.isin(trading_hours).astype('int') if len(trading_hours) > 0 else 1
         
+        #if len(self.exclude_time > 0):
+        #    data.loc[(data.index.time.isin(self.exclude_time)), 'valid'] = 0
+        
+        #if len(self.trade_time > 0):
+        #    data.loc[)()]
+
+        if len(self.exclude_time) > 0:
+            data.loc[data.index.strftime('%H:%M').isin(self.exclude_time), 'valid'] = 0
+
+        if len(self.trade_time) > 0:
+            data.loc[(data.index.strftime('%H:%M').isin(self.trade_time)) & (data['signal'] != 0), 'valid'] = 1
+            data.loc[(~data.index.strftime('%H:%M').isin(self.trade_time)) & (data['signal'] != 0), 'valid'] = 0
+
+        if self.trading_window_start is not None: 
+            data.loc[(data.index.hour < self.trading_window_start) & (data['signal'] != 0), 'valid'] = 0
+        
+        if self.trading_window_end is not None: 
+            data.loc[(data.index.hour >= self.trading_window_end) & (data['signal'] != 0), 'valid'] = 0
         
         # modifies signal depending on trade validity
         data['signal'] = data['signal'] * data['valid']
         
-        
+
         # filters signals only if long or short orders are allowed
         data.loc[data['signal'] == -1, 'signal'] = 0 if self.orders == 'long' else -1
         data.loc[data['signal'] == 1, 'signal'] = 0 if self.orders == 'short' else 1
@@ -501,10 +538,17 @@ class Simulation:
         
         #THIS IS WORKING
         # amount to subtract from sprade diff due to spread. evaluates impact of spread to overall performance
-        self.spread_factor = self.spread * self.trade_point
-        data['spread'] = self.spread
-        data['spread_factor'] = np.where(data['signal'] != 0, self.spread_factor, 0)
+        #self.spread_factor = self.spread * self.trade_point
+        #data['spread'] = self.spread 
+        #data['spread_factor'] = np.where(data['signal'] != 0, self.spread_factor, 0)
+
+        if 'spread' not in data.columns:
+            data['spread'] = self.spread 
+
+        data['spread_factor'] = 0
+        data.loc[data['signal'] != 0, 'spread_factor'] = data['spread'] * self.trade_point
         
+     
         # CORRECT PROFIT CALCULATION USING MT5 DATA
         #ans = (close_price - open_price) * (1 / pt) * (vol) * (trade_tick)
         
@@ -695,7 +739,7 @@ class Simulation:
         
         comparison = pd.concat([self.train_summary, self.train_filtered_summary, self.test_filtered_summary], axis = 1)
         self.train_test_df = comparison.copy()
-        comparison = comparison.loc[['signal_accuracy', 'win_rate','avg_profit_per_win','avg_l_per_loss','profit_factor','max_dd_pct','avg_rrr']]
+        comparison = comparison.loc[['win_rate','avg_profit_per_win','avg_l_per_loss','profit_factor','max_dd_pct','avg_rrr']]
         comparison['diff'] = 1 - (comparison[comparison.columns[1]] / comparison[comparison.columns[0]])
         
         return comparison, self.train_test_df
@@ -749,7 +793,7 @@ class Simulation:
         filtered = self.test_filtered.copy()
         
         cols = ['balance','peak_balance']
-        plt.figure(figsize=(12, 5))
+        plt.figure(figsize=(12, 8))
         plt.axhline(y = self.starting_balance, ls = 'dotted', color = 'g')
         plt.plot(unfiltered.index, unfiltered[cols])
         plt.plot(filtered.index, filtered[cols])

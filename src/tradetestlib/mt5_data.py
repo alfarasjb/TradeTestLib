@@ -7,7 +7,6 @@ from datetime import datetime as dt, timedelta
 class MT5_Data:
     
     def __init__(self):
-        
         if mt5.account_info() is None:
             print('Launching MT5')
             self.launch_mt5()
@@ -87,32 +86,42 @@ class MT5_Data:
             'mn1' : mt5.TIMEFRAME_MN1,
         }
         
-        if request_type == 'pos':
-            rates = mt5.copy_rates_from_pos(symbol, timeframe_converter[tf], start_index, num_bars)
+        try:
+            if request_type == 'pos':
+                rates = mt5.copy_rates_from_pos(symbol, timeframe_converter[tf], start_index, num_bars)
 
-        elif request_type == 'date':
-            rates = mt5.copy_rates_from(symbol, timeframe_converter[tf], start_date, num_bars)
+            elif request_type == 'date':
+                rates = mt5.copy_rates_from(symbol, timeframe_converter[tf], start_date, num_bars)
 
-        elif request_type == 'range':
-            rates = mt5.copy_rates_range(symbol, timeframe_converter[tf], start_date, end_date)
+            elif request_type == 'range':
+                rates = mt5.copy_rates_range(symbol, timeframe_converter[tf], start_date, end_date)
+            
+            else: 
+                raise ValueError('Invalid Request')
+            
+
+            #rates = mt5.copy_rates_from_pos(symbol, timeframe_converter[tf], 1, 99000)
+            data = pd.DataFrame(data = rates)
+            data['time'] = pd.to_datetime(data['time'], unit = 's')
+            data = data.loc[:, ['time', 'open', 'high', 'low', 'close','spread']]
+            data.columns = ['Date','Open','High','Low','Close','Spread']
+            data = data.set_index('Date', drop = True)
+
+            if export:
+                dir_path = f'.//history//{symbol}'
+                if not os.path.isdir(dir_path):
+                    os.mkdir(dir_path)
+                path = f'{dir_path}//{symbol}_{tf}.csv'
+                data.to_csv(path)
+
+            return data
         
-        else: 
-            raise ValueError('Invalid Request')
-        
+        except KeyError: 
+            print(f'No data available for: {symbol} {tf}')
 
-        #rates = mt5.copy_rates_from_pos(symbol, timeframe_converter[tf], 1, 99000)
-        data = pd.DataFrame(data = rates)
-        data['time'] = pd.to_datetime(data['time'], unit = 's')
-        data = data.loc[:, ['time', 'open', 'high', 'low', 'close']]
-
-        if export:
-            dir_path = f'history//{symbol}'
-            if not os.path.isdir(dir_path):
-                os.mkdir(dir_path)
-            path = f'{dir_path}//{symbol}_{tf}.csv'
-            data.to_csv(path)
         
-        return data
+        
+        
         
     @staticmethod
     def get_mt5_symbols(category: str = 'Exotics'):

@@ -39,17 +39,22 @@ class Optimize:
                  timeframe: str, 
                  train: pd.DataFrame, 
                  test: pd.DataFrame,
+                 starting_balance: 100000,
                  metric: str = 'sharpe_ratio', 
                  how: str = 'maximize', 
-                 dataset: str = 'train'):
+                 dataset: str = 'train',
+                 show_properties: str = False):
         self.symbol = symbol
         self.timeframe = timeframe
         self.train = train
         self.test = test
+        self.starting_balance = starting_balance
         self.metric = metric
         self.how = how
         self.dataset = dataset
-        self.print_optimization_parameters()
+        self.show_properties = show_properties
+        if self.show_properties:
+            self.print_optimization_parameters()
         
     def print_optimization_parameters(self):
         """
@@ -59,6 +64,7 @@ class Optimize:
         print('========== OPTIMIZATION PARAMETERS ==========')
         print('Symbol: ', self.symbol)
         print('Timeframe: ', self.timeframe)
+        print('Starting Balance: ', self.starting_balance)
         print('Metric: ', self.metric)
         print('Target: ', self.how)
         print('Optimization Method: Grid Search')
@@ -81,22 +87,24 @@ class Optimize:
         -------
         optimized_parameters
         """
-        print('Lots: ', params['lot'])
-        print('Hold Time: ', params['hold_time'])
-        print('Max Loss: ', params['max_loss'])
-        print('========== RUNNING OPTIMIZATION ==========')
+        if self.show_properties:
+            print('Lots: ', params['lot'])
+            print('Hold Time: ', params['hold_time'])
+            print('Max Loss: ', params['max_loss'])
+            print('========== RUNNING OPTIMIZATION ==========')
         sim_elements = []
         summaries = []
         sims = []
         for l,h,m in tqdm(product(params['lot'], params['hold_time'],params['max_loss'])):
             sim = Simulation(symbol = self.symbol, timeframe = self.timeframe, train_raw = self.train, test_raw = self.test, 
                              lot = l, 
-                             starting_balance = 100000, 
+                             starting_balance = self.starting_balance, 
                              hold_time = h, 
                              #trading_hours = th, 
                              show_properties = False,
                              commission = 3.5,
-                             max_loss_pct = m)
+                             max_loss_pct = m,
+                             spread = 1)
             
             if self.dataset == 'combined':
                 data = sim.combined_summary
