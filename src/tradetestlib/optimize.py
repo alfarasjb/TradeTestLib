@@ -21,6 +21,9 @@ class Optimize:
         
     test: pd.DataFrame
         testing dataset
+
+    starting_balance: int 
+        optimization starting balance
         
     metric: str
         performance metric for evaluating strategy performance using specified hyperparameter configuration
@@ -32,6 +35,9 @@ class Optimize:
         
     dataset: str
         dataset name
+
+    show_properties: bool
+        enables/disables summary of optimization properties
     
     """
     def __init__(self, 
@@ -40,7 +46,7 @@ class Optimize:
                  train: pd.DataFrame, 
                  test: pd.DataFrame,
                  starting_balance: 100000,
-                 metric: str = 'sharpe_ratio', 
+                 metric: str = 'expectancy', 
                  how: str = 'maximize', 
                  dataset: str = 'train',
                  show_properties: str = False):
@@ -53,6 +59,7 @@ class Optimize:
         self.how = how
         self.dataset = dataset
         self.show_properties = show_properties
+
         if self.show_properties:
             self.print_optimization_parameters()
         
@@ -72,7 +79,8 @@ class Optimize:
         print('========== OPTIMIZATION PARAMETERS ==========')
     
     
-    def run_grid_search(self, params: dict):
+    def run_grid_search(self, params: dict, commission: float = 3.5, num_elements: int = 10, spread: int = 1, exclude_time: list = [],
+                        trade_time: list = [], trading_window_start: int = None, trading_window_end: int = None):
         """
         Runs a grid search algorithm using the params dictionary, and creates individual simulation instances, and evaluates its performance
         based on the specified evaluation metric and target.
@@ -82,6 +90,27 @@ class Optimize:
         ----------
         params: dict
             dictionary containing different parameter combinations to test. 
+
+        commission: float
+            commission per lot 
+
+        num_elements: int
+            maximum number of filtered signals 
+        
+        spread: int 
+            bid/ask spread 
+
+        exclude_time: list 
+            time in format '%H:%M' to exclude trading activity
+
+        trade_time: list
+            time in format '%H:%M' to allow trading 
+
+        trading_window_start: int 
+            trading window start (hours, GMT+2)
+
+        trading_window_end: int 
+            trading window end (hours, GMT+2)
             
         Returns
         -------
@@ -92,19 +121,29 @@ class Optimize:
             print('Hold Time: ', params['hold_time'])
             print('Max Loss: ', params['max_loss'])
             print('========== RUNNING OPTIMIZATION ==========')
+            
         sim_elements = []
         summaries = []
         sims = []
+
         for l,h,m in tqdm(product(params['lot'], params['hold_time'],params['max_loss'])):
-            sim = Simulation(symbol = self.symbol, timeframe = self.timeframe, train_raw = self.train, test_raw = self.test, 
-                             lot = l, 
-                             starting_balance = self.starting_balance, 
-                             hold_time = h, 
-                             #trading_hours = th, 
-                             show_properties = False,
-                             commission = 3.5,
-                             max_loss_pct = m,
-                             spread = 1)
+            sim = Simulation(symbol = self.symbol, 
+                            timeframe = self.timeframe, 
+                            train_raw = self.train, 
+                            test_raw = self.test, 
+                            lot = l, 
+                            starting_balance = self.starting_balance, 
+                            hold_time = h, 
+                            #trading_hours = th, 
+                            show_properties = False,
+                            commission = commission,
+                            max_loss_pct = m,
+                            num_elements = num_elements,
+                            spread = spread, 
+                            exclude_time = exclude_time, 
+                            trade_time = trade_time, 
+                            trading_window_start = trading_window_start,
+                            trading_window_end = trading_window_end)
             
             if self.dataset == 'combined':
                 data = sim.combined_summary
