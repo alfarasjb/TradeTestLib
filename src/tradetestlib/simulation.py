@@ -62,6 +62,24 @@ class Simulation:
         
     num_elements: int 
         number of elements to use for interval filtering, ranked from best to worst performance
+
+    spread: int 
+        overrides bid/ask spread from raw input 
+
+    exclude_time: list 
+        time in format '%H:%M' to exclude trading activity
+
+    trade_time: list
+        time in format '%H:%M' to allow trading 
+
+    trading_window_start: int 
+        trading window start (hours, GMT+2)
+
+    trading_window_end: int 
+        trading window end (hours, GMT+2)
+
+    default_figsize: tuple 
+        default figsize for plots
     
     Methods
     -------
@@ -135,10 +153,13 @@ class Simulation:
                  exclude_time: list = [],
                  trade_time: list = [],
                  trading_window_start: int = None, 
-                 trading_window_end: int = None
+                 trading_window_end: int = None,
+                 default_figsize: tuple = (12, 8)
                 ):
         
         self.timeframes = ['m1','m5','m15','m30','h1','h4','d1']
+        self.intraday = ['m1','m5','m15','m30','h1','h4']
+        self.htf = ['d1','w1','mn1']
         self.valid_orders = ['long','short','all']
         
         assert timeframe in self.timeframes, 'Invalid Timeframe'
@@ -183,7 +204,7 @@ class Simulation:
         
         self.trading_window_start = trading_window_start
         self.trading_window_end = trading_window_end
- 
+        self.default_figsize = default_figsize
 
         self.show_properties = show_properties
 
@@ -459,6 +480,7 @@ class Simulation:
         
         if filtered:
             trading_hours = self.best_interval_by_cost_delta(self.num_elements).index.tolist()
+            trading_hours = [t.strftime('%H:%M') for t in trading_hours]
         else:
             trading_hours = []
         
@@ -467,9 +489,9 @@ class Simulation:
         if len(trading_hours) > 0:
             data['valid'] = 0
             
-            if self.filter_by == 'hour':
+            if self.filter_by == 'time':
                 #data['valid'] = data.index.hour.isin(trading_hours).astype('int')
-                data.loc[(data.index.hour.isin(trading_hours)), 'valid'] = 1
+                data.loc[(data.index.strftime('%H:%M').isin(trading_hours)), 'valid'] = 1
             elif self.filter_by == 'day_of_week':
                 data.loc[(data.index.dayofweek.isin(trading_hours)), 'valid'] = 1
             else:
@@ -548,6 +570,9 @@ class Simulation:
         data['spread_factor'] = 0
         data.loc[data['signal'] != 0, 'spread_factor'] = data['spread'] * self.trade_point
         
+        # not working properly
+        data['closing_spread_factor'] = data['spread_factor'].shift(periods = -(self.hold_time - 1)) if self.hold_time > 0 else data['spread_factor']
+        
      
         # CORRECT PROFIT CALCULATION USING MT5 DATA
         #ans = (close_price - open_price) * (1 / pt) * (vol) * (trade_tick)
@@ -567,7 +592,7 @@ class Simulation:
         ## === RAW PROFIT === ##
         
         ## === SPREAD ADJUSTED PROFIT === ##
-        data['spread_adj_trade_diff'] = data['trade_diff'] - data['spread_factor']
+        data['spread_adj_trade_diff'] = data['trade_diff'] - data['spread_factor'] 
         data['spread_adjusted_profit'] = (data['spread_adj_trade_diff']) * (1 / self.trade_point) * data['lot'] * self.trade_tick
         data.loc[(data['spread_adjusted_profit'] < 0) & (data['spread_adjusted_profit'] < -self.max_loss), 'spread_adjusted_profit'] = -self.max_loss
         data['spread_adj_trade_points'] = abs(data['spread_adj_trade_diff']) * (1 / self.trade_point)
@@ -659,7 +684,7 @@ class Simulation:
         else:
             raise ValueError('Invalid Comparison Type. Use: balance, returns')
             
-        data[compare_data].plot(figsize = (12, 5))
+        data[compare_data].plot(figsize = self.default_figsize)
         
         plt.legend(labels = labels)
         plt.xlabel('Time')
@@ -710,7 +735,7 @@ class Simulation:
         train_build, test_build, combined_build = m(train_grouped), m(test_grouped), m(combined_grouped)
         main_df = pd.concat([train_build,test_build], axis = 1)
         main_df.columns = ['train_net','test_net']
-        main_df.plot(kind = 'bar', figsize = (12, 5))
+        main_df.plot(kind = 'bar', figsize = self.default_figsize)
         
         plt.xlabel(groupby.replace('_',' ').title())
         plt.ylabel(f'Returns {metric.replace("_"," ").title()}')
@@ -752,7 +777,7 @@ class Simulation:
         
         test_start = self.test_evaluation.start_date
         start_bal = self.train_evaluation.starting_balance
-        plt.figure(figsize=(12,5))
+        plt.figure(figsize=self.default_figsize)
         plt.axvline(x = test_start, ls = '--')
         plt.axhline(y = start_bal, ls = 'dotted', color = 'g')
         plt.plot(self.combined.index, self.combined[['balance','peak_balance']])
@@ -773,10 +798,11 @@ class Simulation:
         """
         
         data = self.select_dataset(dataset)
+        sig = data.loc[data['signal'] != 0]
         
-        grouped = data.groupby(self.filter_by)[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum()
+        grouped = sig.groupby(self.grouping(sig))[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum()
         
-        grouped.plot(kind = 'bar', figsize = (12, 5))
+        grouped.plot(kind = 'bar', figsize = self.default_figsize)
         plt.legend(labels = ['Raw Profit','Spread Adjusted Profit', 'Transaction Costs', 'Cost Adjusted Profit'])
         plt.title(f'{dataset.title()} Set Transaction Cost Composition')
         plt.ylabel('Profit ($)')
@@ -802,6 +828,30 @@ class Simulation:
         plt.ylabel('Equity ($)')
         plt.show()
         
+    def plot_intraday_performance(self, dataset:str = 'train', metric: str = 'net_profit', func: str = 'mean'):
+        """
+        Plots intraday performance by net profit. 
+        """
+
+        data = self.select_dataset(dataset)
+
+        sig = data.loc[data['signal'] != 0]
+        grouped = sig.groupby(self.grouping(sig))[metric]
+
+        if func == 'mean':
+            calc = grouped.mean()
+
+        elif func == 'sum':
+            calc = grouped.sum()
+        elif func == 'std':
+            calc = grouped.std()
+
+        calc.plot(kind = 'bar', figsize = self.default_figsize)
+        plt.title('Intraday Performance')
+        plt.xlabel('Time')
+        plt.ylabel(metric.replace('_', ' ').title())
+        plt.show()
+
     def best_interval_by_profit(self, metric: str = 'net_profit'):
         """
         Builds a dataframe of best time intervals. 
@@ -819,7 +869,8 @@ class Simulation:
         """
         
         dataset = self.train_data.copy()
-        grouped = dataset.groupby(self.filter_by)[['net_profit']].mean()
+        sig = dataset.loc[dataset['signal'] != 0]
+        grouped = sig.groupby(self.grouping(sig))[['net_profit']].mean()
         best_results_df = grouped.loc[grouped['net_profit'] > 0].sort_values(by = 'net_profit', ascending = False)
         
         return best_results_df
@@ -827,6 +878,7 @@ class Simulation:
     def best_interval_by_cost_delta(self, num_elements: int):
         """
         Builds a dataframe of best performing time intervals. 
+
         
         Ranks the time intervals by getting an aggregated sum of net_profit vs net transaction costs. 
         
@@ -841,8 +893,10 @@ class Simulation:
         """
         
         dataset = self.train_data.copy()
+
+        filter_by = dataset.index.time if self.timeframe in self.intraday else dataset.index.dayofweek
         
-        cost_df = dataset.groupby(self.filter_by)[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum()
+        cost_df = dataset.groupby(self.grouping(dataset))[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum()
         cost_df['cost_diff'] = cost_df['net_profit'] - cost_df['commission']
         best_results_df = cost_df[['cost_diff']].loc[(cost_df['cost_diff'] > 0) & (cost_df['net_profit'] > 0)].sort_values(by='cost_diff', ascending = False)
         self.cost_df = cost_df.copy()
@@ -862,7 +916,7 @@ class Simulation:
         
         data = self.select_dataset(dataset)
 
-        plt.figure(figsize = (8, 5))
+        plt.figure(figsize = self.default_figsize)
         sns.distplot(data.loc[(data['signal'] != 0) & (data['valid'] == 1)][['net_profit']])
         plt.xlabel('Profit ($)')
         plt.title(f'{dataset.title()} Set Profit Distribution')
@@ -909,10 +963,18 @@ class Simulation:
         htf = ['d1','w1','mn1']
 
         if timeframe in minutes_tf:
-            return 'hour'
+            return 'time'
         elif timeframe in hours_tf:
-            return 'hour'
+            return 'time'
         elif timeframe in htf:
             return 'day_of_week'
         else:
             raise ValueError('Invalid Timeframe')
+
+    def grouping(self, reference_dataset):
+        if self.filter_by == 'time':
+            return reference_dataset.index.time 
+        elif self.filter_by == 'day_of_week':
+            return reference_dataset.index.time
+
+

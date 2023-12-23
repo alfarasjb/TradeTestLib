@@ -197,6 +197,7 @@ class Evaluation:
         self.start_date = data[:1].index.item().date()
         self.end_date = data[-1:].index.item().date()
         days = (self.end_date - self.start_date).days
+        years = ((data.index[-1:] - data.index[:1]) / np.timedelta64(1, 'Y')).item()
         
         # Test start and final balance
         self.starting_balance = data[:1]['balance'].item()
@@ -268,12 +269,15 @@ class Evaluation:
         risk_free_rate = tbill_rate / 100
         
         roi = self.annual_return / 100
-        self.sharpe_ratio = (roi - risk_free_rate) / sdev_ret
+        #self.sharpe_ratio = (roi - risk_free_rate) / sdev_ret
 
         # expectancy
         # (average gain * win%) - (average loss * loss%)
         self.expectancy = ((self.avg_win_usd * (self.win_rate/100))) - (abs(self.avg_loss_usd) * (1 - (self.win_rate / 100)))
         
+        # cagr - compound annual growth rate
+        self.cagr = (((self.end_balance / self.starting_balance) ** (1 / years)) - 1) * 100
+
         # Overall performance: profit factor, maxdd, avg rrr 
         
         self.profit_factor = abs((self.avg_win_usd * self.win_rate) / ((1 - self.win_rate) * self.avg_loss_usd))
@@ -330,8 +334,9 @@ class Evaluation:
             'short_wr' : self.short_wr,
             'short_avg_win' : self.short_avg_win,
             'profit_factor' : self.profit_factor,  
-            'sharpe_ratio' : self.sharpe_ratio,
+            #'sharpe_ratio' : self.sharpe_ratio,
             'expectancy' : self.expectancy,
+            'cagr' : self.cagr,
             'max_dd_pct' : self.max_dd_pct,
             'avg_rrr' : self.avg_rrr,
             'commission_composition' : self.commission_composition

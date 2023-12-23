@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "tradesimlib"
-version = "0.0.1"
+name = "tradetestlib"
+version = "0.1.0"
 authors = [
   { name="Jay Benedict Alfaras", email="alfarasjb@gmail.com" },
 ]
