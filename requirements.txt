@@ -4,4 +4,4 @@ pytest
 matplotlib
 seaborn
 tqdm
-MetaTrader5>=5.0.45
+MetaTrader5
