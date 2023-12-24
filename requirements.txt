@@ -1,7 +1,6 @@
 pandas
 numpy
-pytest
-metatrader5
+MetaTrader5
 matplotlib
 seaborn
 tqdm
