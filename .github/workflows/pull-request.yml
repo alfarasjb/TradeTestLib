@@ -36,5 +36,6 @@ jobs:
       env: 
         TWINE_USERNAME: ${{ secrets.TESTPYPI_USERNAME}}
         TWINE_PASSWORD: ${{ secrets.TESTPYPI_PASSWORD}} 
+        TWINE_REPOSITORY: testpypi
       run: |
-        twine upload testpypi dist/*
+        twine upload dist/*
