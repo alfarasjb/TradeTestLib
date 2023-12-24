@@ -13,6 +13,7 @@ setup(
     author_email='alfarasjb@gmail.com',
     url = 'https://github.com/alfarasjb/TradeTestLib',
     packages = find_packages(),
+    license='MIT',
     install_requires = [
         'numpy>=1.21.2',
         'pandas>=1.4.4',
