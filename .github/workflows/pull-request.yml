@@ -34,7 +34,7 @@ jobs:
 
     - name: Publish to testpypi
       env: 
-        TWINE_USERNAME: ${{ secrets.PYPI_USERNAME}}
-        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD}} 
+        TWINE_USERNAME: ${{ secrets.TESTPYPI_USERNAME}}
+        TWINE_PASSWORD: ${{ secrets.TESTPYPI_PASSWORD}} 
       run: |
         twine upload testpypi dist/*
