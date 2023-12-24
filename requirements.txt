@@ -1,7 +1,7 @@
 pandas
 numpy
 pytest
-MetaTrader5
 matplotlib
 seaborn
 tqdm
+MetaTrader5>=5.0.45
