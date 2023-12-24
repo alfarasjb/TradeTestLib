@@ -8,7 +8,7 @@ setup(
     description = 'A backtesting library for MetaTrader5',
     long_description = readme,
     long_description_content_type = 'text/markdown',
-    version = '0.1.3',
+    version = '1.0.0',
     author = 'Jay Alfaras',
     author_email='alfarasjb@gmail.com',
     url = 'https://github.com/alfarasjb/TradeTestLib',
