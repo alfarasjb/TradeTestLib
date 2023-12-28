@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import MetaTrader5 as mt5
 import matplotlib.pyplot as plt
+plt.style.use('seaborn-v0_8-darkgrid')
 import seaborn as sns
 
 from tradetestlib.evaluation import Evaluation
