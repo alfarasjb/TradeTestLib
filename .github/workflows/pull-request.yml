@@ -9,8 +9,8 @@
 name: PR
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches: [beta]
 
 permissions:
   contents: read

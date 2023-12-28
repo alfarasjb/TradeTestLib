@@ -1,4 +1,5 @@
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages 
+from tradetestlib import __version__
 
 with open('README.md', 'r') as f:
     readme = f.read()
@@ -8,20 +9,21 @@ setup(
     description = 'A backtesting library for MetaTrader5',
     long_description = readme,
     long_description_content_type = 'text/markdown',
-    version = '1.0.0',
+    version = __version__,
     author = 'Jay Alfaras',
     author_email='alfarasjb@gmail.com',
     url = 'https://github.com/alfarasjb/TradeTestLib',
     packages = find_packages(),
     license='MIT',
     install_requires = [
-        'numpy>=1.21.2',
-        'pandas>=1.4.4',
-        'matplotlib',
-        'seaborn',
-        'tqdm',
-        'MetaTrader5'
+        'numpy>=1.26.0',
+        'pandas>=2.0.0',
+        'matplotlib>=3.5.2',
+        'seaborn>=0.11.2',
+        'tqdm>=4.64.1',
+        'MetaTrader5>=5.0.45'
     ],
     include_package_data=True,
     python_requires = '>=3.8'
 )
+

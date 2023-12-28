@@ -1,3 +1,5 @@
+import warnings
+warnings.filterwarnings('ignore')
 import pandas as pd 
 import numpy as np
 import MetaTrader5 as mt5
@@ -819,7 +821,7 @@ class Simulation:
         filtered = self.test_filtered.copy()
         
         cols = ['balance','peak_balance']
-        plt.figure(figsize=(12, 8))
+        plt.figure(figsize=self.default_figsize)
         plt.axhline(y = self.starting_balance, ls = 'dotted', color = 'g')
         plt.plot(unfiltered.index, unfiltered[cols])
         plt.plot(filtered.index, filtered[cols])
