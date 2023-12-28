@@ -1,4 +1,4 @@
-#from version import VERSION 
+
 __version__ = '1.0.1b1'
 
 from .simulation import Simulation

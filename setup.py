@@ -1,5 +1,4 @@
 from setuptools import setup, find_packages 
-from tradetestlib import __version__
 
 with open('README.md', 'r') as f:
     readme = f.read()
@@ -9,7 +8,7 @@ setup(
     description = 'A backtesting library for MetaTrader5',
     long_description = readme,
     long_description_content_type = 'text/markdown',
-    version = __version__,
+    version = '1.0.1b1',
     author = 'Jay Alfaras',
     author_email='alfarasjb@gmail.com',
     url = 'https://github.com/alfarasjb/TradeTestLib',
