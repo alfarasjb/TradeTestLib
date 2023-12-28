@@ -1,5 +1,5 @@
 
-__version__ = '1.0.1b2'
+__version__ = '1.0.1'
 
 from .simulation import Simulation
 from .evaluation import Evaluation
