@@ -1,6 +1,6 @@
-pandas
-numpy
-MetaTrader5
-matplotlib
-seaborn
-tqdm
+pandas>=2.0.0
+numpy>=1.26.0
+MetaTrader5>=5.0.45
+matplotlib>=3.5.2
+seaborn>=0.11.2
+tqdm>=4.64.1

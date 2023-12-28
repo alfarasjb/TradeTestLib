@@ -197,7 +197,8 @@ class Evaluation:
         self.start_date = data[:1].index.item().date()
         self.end_date = data[-1:].index.item().date()
         days = (self.end_date - self.start_date).days
-        years = ((data.index[-1:] - data.index[:1]) / np.timedelta64(1, 'Y')).item()
+        #years = ((data.index[-1:] - data.index[:1]) / np.timedelta64(1, 'Y')).item()
+        years = days / 365
         
         # Test start and final balance
         self.starting_balance = data[:1]['balance'].item()

@@ -1,7 +1,10 @@
+import warnings
+warnings.filterwarnings('ignore')
 import pandas as pd 
 import numpy as np
 import MetaTrader5 as mt5
 import matplotlib.pyplot as plt
+plt.style.use('seaborn-v0_8-darkgrid')
 import seaborn as sns
 
 from tradetestlib.evaluation import Evaluation
@@ -819,7 +822,7 @@ class Simulation:
         filtered = self.test_filtered.copy()
         
         cols = ['balance','peak_balance']
-        plt.figure(figsize=(12, 8))
+        plt.figure(figsize=self.default_figsize)
         plt.axhline(y = self.starting_balance, ls = 'dotted', color = 'g')
         plt.plot(unfiltered.index, unfiltered[cols])
         plt.plot(filtered.index, filtered[cols])
