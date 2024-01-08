@@ -180,6 +180,7 @@ class Evaluation:
         self.evaluate()
     
     
+    
     def evaluate(self):
         """
         Generates evaluation and calculates performance metrics of the dataset. 
@@ -192,13 +193,17 @@ class Evaluation:
         loss_mask = data['net_profit'] < 0
         long_signal_mask = data['signal'] == 1
         short_signal_mask = data['signal'] == -1
+        trade_mask = data['signal'] != 0
         
         # Test start date, end date, and calendar days
         self.start_date = data[:1].index.item().date()
         self.end_date = data[-1:].index.item().date()
-        days = (self.end_date - self.start_date).days
+        self.calendar_days = (self.end_date - self.start_date).days
+        
+        traded_set = data.loc[trade_mask]
+        self.trading_days = len(traded_set.index.unique())
         #years = ((data.index[-1:] - data.index[:1]) / np.timedelta64(1, 'Y')).item()
-        years = days / 365
+        self.years = self.calendar_days / 365
         
         # Test start and final balance
         self.starting_balance = data[:1]['balance'].item()
@@ -247,8 +252,8 @@ class Evaluation:
         self.net_profit_pct = (self.net_profit / self.starting_balance) * 100
         
         # Periodic Return (for calculating sharpe ratio)
-        self.daily_return = self.net_profit_pct / days
-        self.monthly_return = self.daily_return * 30
+        self.daily_return = self.net_profit_pct / self.trading_days
+        self.monthly_return = self.daily_return * 21 # average 21 trading days in a month 
         self.annual_return = self.monthly_return * 12
         
         # Order statistics (long and short), amount, and performance
@@ -263,21 +268,15 @@ class Evaluation:
         self.long_avg_win = data.loc[(long_signal_mask) & (profit_mask)]['net_profit'].mean()
         self.short_avg_win = data.loc[(short_signal_mask) & (profit_mask)]['net_profit'].mean()
         
-        # sharpe ratio - approximated from current 10y yield
-        tbill_rate = 4.47 # 10 year as of 11/25/2023
-        sdev_ret = (data.loc[data['net_profit'] != 0, 'net_profit'] / self.starting_balance).std()
         
-        risk_free_rate = tbill_rate / 100
-        
-        roi = self.annual_return / 100
-        #self.sharpe_ratio = (roi - risk_free_rate) / sdev_ret
+        self.sharpe_ratio = self.annualized_sharpe_ratio()
 
         # expectancy
         # (average gain * win%) - (average loss * loss%)
         self.expectancy = ((self.avg_win_usd * (self.win_rate/100))) - (abs(self.avg_loss_usd) * (1 - (self.win_rate / 100)))
         
         # cagr - compound annual growth rate
-        self.cagr = (((self.end_balance / self.starting_balance) ** (1 / years)) - 1) * 100
+        self.cagr = (((self.end_balance / self.starting_balance) ** (1 / self.years)) - 1) * 100
 
         # Overall performance: profit factor, maxdd, avg rrr 
         
@@ -335,7 +334,7 @@ class Evaluation:
             'short_wr' : self.short_wr,
             'short_avg_win' : self.short_avg_win,
             'profit_factor' : self.profit_factor,  
-            #'sharpe_ratio' : self.sharpe_ratio,
+            'sharpe_ratio' : self.sharpe_ratio,
             'expectancy' : self.expectancy,
             'cagr' : self.cagr,
             'max_dd_pct' : self.max_dd_pct,
@@ -351,3 +350,138 @@ class Evaluation:
         """
         
         return pd.DataFrame.from_dict(self.evaluation_data, orient = 'index')
+    
+
+    def annualized_sharpe_ratio(self):
+        """
+        Annualized Sharpe Ratio derived from Dr. Ernest Chan's Book: Quantitative Trading 2nd Edition
+        """
+        calendar_days = (self.end_date - self.start_date).days 
+        years = calendar_days / 365
+        benchmark_trading_days = 252 
+
+        traded_set = self.data.loc[self.data['signal'] != 0]
+        
+
+        risk_free_rate = 4 # risk free rate in PERCENTAGE NOT DECIMAL
+
+        ## CALCUALTE BY DAY 
+        #grouped = (traded_set.groupby(traded_set.index.date)['net_profit'].sum() / self.starting_balance) * 100 ## intraday net profit 
+        grouped = (traded_set.groupby([traded_set.index.year, traded_set.index.month])['net_profit'].sum() / self.starting_balance) * 100 
+        trading_days = len(traded_set.index.unique())
+
+        mu = grouped.mean()
+        sigma = grouped.std()
+
+        ann_mu = 12 * mu 
+        ann_sigma = np.sqrt(12) * sigma
+        
+        ann_sharpe = (ann_mu - risk_free_rate) / ann_sigma 
+
+        return ann_sharpe
+
+    def performance_metrics_df(self):
+        """
+        CAGR
+        EXPECTANCY 
+        PROFIT FACTOR
+        SHARPE RATIO 
+        """
+
+        items = {
+            'cagr' : self.cagr,
+            'expectancy' : self.expectancy,
+            'sharpe_ratio' : self.sharpe_ratio,
+            'profit_factor' : self.profit_factor,
+            'max_dd_pct' : self.max_dd_pct,
+            'avg_rrr' : self.avg_rrr
+        }
+
+        return self.create_df_from_items(items)
+    
+    
+    def backtest_info_df(self):
+        """
+        start date
+        end date
+        calendar days 
+        years
+        trading days 
+
+        starting balance
+        end balance
+        """
+
+        items = {
+            'start_date' : self.start_date,
+            'end_date' : self.end_date,
+            'calendar_days' : self.calendar_days,
+            'trading_days' : self.trading_days,
+            'years' : self.years,
+        }
+
+        return self.create_df_from_items(items)
+    
+
+    def periodic_returns_df(self):
+        
+        items = {
+            'daily_return' : self.daily_return,
+            'monthly_return' : self.monthly_return,
+            'annual_return' : self.annual_return
+        }
+
+        return self.create_df_from_items(items)
+
+    def positions_summary_df(self):
+
+        items = {
+            'num_longs' : self.long_positions,
+            'pct_longs' : self.pct_long,
+            'long_wins' : self.long_wins,
+            'long_wr' : self.long_wr,
+            'long_avg_win' : self.long_avg_win,
+            'num_shorts' : self.short_positions,
+            'pct_short' : self.pct_short,
+            'short_wins' : self.short_wins,
+            'short_wr' : self.short_wr,
+            'short_avg_win' : self.short_avg_win,
+        }
+
+        return self.create_df_from_items(items)
+
+    def pl_statistics_df(self):
+        
+        items = {
+            'wins' : self.wins, 
+            'losses' : self.losses, 
+            'total' : self.total, 
+            'win_rate' : self.win_rate,
+            'max_bal' : self.max_bal,
+            'min_bal' : self.min_bal,
+            'max_bal_pct' : self.max_bal_pct, 
+            'min_bal_pct' : self.min_bal_pct,
+            'avg_profit_per_win' : self.avg_win_usd, 
+            'avg_l_per_loss' : self.avg_loss_usd, 
+            'gross_profit' : self.gross_profit,
+            'net_profit' : self.net_profit,
+            'net_profit_pct' : self.net_profit_pct, 
+        }
+
+        return self.create_df_from_items(items)
+
+    def hyperparameters_df(self):
+
+        items = {
+            'lot' : self.lot,
+            'holdtime' : self.holdtime, 
+            'max_loss_pct' : self.max_loss_pct
+        }
+
+        return self.create_df_from_items(items)
+
+    def create_df_from_items(self, items):
+
+        df = pd.DataFrame.from_dict(items, orient='index')
+        df.columns = ['Value']
+        return df

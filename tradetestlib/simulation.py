@@ -970,6 +970,50 @@ class Simulation:
         ax2.set_ylabel('Drawdown (%)')
 
         plt.show()
+
+    
+    def plot_cumulative_gain_by_month(self):
+        """
+        Plots cumulative gain by month
+        """
+        dataset = self.combined_filtered.copy()
+        monthly_returns = pd.DataFrame((dataset.groupby([dataset.index.year, dataset.index.month])['net_profit'].sum() / self.starting_balance) * 100)
+        monthly_returns.index = monthly_returns.index.rename(['Year','Mon_int'])
+        months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+        monthly_returns['Month'] = monthly_returns.index.get_level_values('Mon_int').map({
+            k+1:v for k,v in enumerate(months)
+        })
+
+        monthly_returns = monthly_returns.reset_index()
+        monthly_returns['Date'] = monthly_returns['Month'] + " " + monthly_returns['Year'].astype('str')
+        monthly_returns = monthly_returns.set_index('Date')
+        monthly_returns = monthly_returns.drop(['Year','Mon_int','Month'], axis = 1)
+
+        monthly_returns.plot(kind = 'bar', figsize=(14,6), color = 'springgreen', alpha = 0.4, edgecolor = 'black')
+
+        plt.legend(labels = ['Returns (%)'])
+        plt.ylabel('Returns (%)')
+        plt.xlabel('Date')
+        plt.grid(axis='x')
+        plt.title('Cumulative Gain By Month')
+        plt.show()
+
+    def plot_cumulative_gain_by_year(self):
+        """
+        Plots annual gain
+        """
+        dataset = self.combined_filtered.copy()
+        annual_returns = pd.DataFrame((dataset.groupby([dataset.index.year])['net_profit'].sum() / self.starting_balance) * 100)
+        annual_returns.index = annual_returns.index.rename('Year')
+        annual_returns.plot(kind = 'bar', figsize=(14,6), color = 'springgreen', alpha = 0.4, edgecolor = 'black')
+
+        plt.legend(labels = ['Returns (%)'])
+        plt.ylabel('Returns (%)')
+        plt.xlabel('Date')
+        plt.title('Cumulative Gain By Year')
+        plt.grid(axis = 'x')
+        plt.show()
+
         
     def select_dataset(self, dataset: str):
         """
