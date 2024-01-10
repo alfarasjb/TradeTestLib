@@ -151,7 +151,16 @@ class Simulation:
     
     plot_returns_distribution()
         Plots a distribution of cost adjusted profit.
-        
+
+    plot_equity_curve()
+        Plots equity curve and drawdown 
+
+    plot_cumulative_gain_by_month()
+        Plots cumulative gain by month. 
+
+    plot_cumulative_gain_by_year()
+        Plots cumulative gain by year.    
+    
     select_dataset()
         Helper function for selecting dataset. Primarily used for plotting
 
@@ -178,7 +187,7 @@ class Simulation:
                  trade_time: list = [],
                  trading_window_start: int = None, 
                  trading_window_end: int = None,
-                 default_figsize: tuple = (12, 8)
+                 default_figsize: tuple = (14, 6),
                 ):
         
         self.timeframes = ['m1','m5','m15','m30','h1','h4','d1']
@@ -647,7 +656,7 @@ class Simulation:
         data['running_pct_gain'] = (data['balance'].pct_change() * 100).cumsum()
         data['peak_balance'] = data['balance'].cummax()
         data['drawdown'] = (1 - (data['balance'] / data['peak_balance'])) * 100
-        
+
          ## TIME INTERVALS
         data['hour'] = data.index.hour
         data['min'] = data.index.minute
@@ -824,12 +833,12 @@ class Simulation:
         data = self.select_dataset(dataset)
         sig = data.loc[data['signal'] != 0]
         
-        grouped = sig.groupby(self.grouping(sig))[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum()
+        grouped = (sig.groupby(self.grouping(sig))[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum() / self.starting_balance) * 100
         
         grouped.plot(kind = 'bar', figsize = self.default_figsize, alpha=0.6, edgecolor='black')
         plt.legend(labels = ['Raw Profit','Spread Adjusted Profit', 'Transaction Costs', 'Cost Adjusted Profit'])
         plt.title(f'{dataset.title()} Set Transaction Cost Composition')
-        plt.ylabel('Profit ($)')
+        plt.ylabel('Cumulative Gain (%)')
         plt.show()
         
     def plot_interval_filter_comparison(self, dataset:str = 'test'):
@@ -939,7 +948,7 @@ class Simulation:
         """
         
         data = self.select_dataset(dataset)
-        data_to_plot = data.loc[(data['signal'] != 0) & (data['valid'] == 1)][['net_profit']]
+        data_to_plot = (data.loc[(data['signal'] != 0) & (data['valid'] == 1)][['net_profit']] / self.starting_balance) * 100
 
         frmt = '{:.3g}'
         jb, jb_p, skew, kurt=tuple([j.item() for j in jarque_bera(data_to_plot)])
@@ -1033,14 +1042,17 @@ class Simulation:
         elif dataset == 'train_filtered':
             return self.train_filtered.copy()
         
-        elif dataset == 'filtered':
+        elif dataset == 'test_filtered':
             return self.test_filtered.copy()
         
         elif dataset == 'combined':
             return self.combined.copy()
         
+        elif dataset == 'combined_filtered':
+            return self.combined_filtered.copy()
+        
         else:
-            raise ValueError('Invalid Dataset type. Use: train, test, combined, train_filtered, test_filtered')
+            raise ValueError('Invalid Dataset type. Use: train, test, train_filtered, test_filtered, combined, combined_filtered')
 
     @staticmethod
     def filter_default(timeframe: str):
