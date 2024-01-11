@@ -45,7 +45,7 @@ class Optimize:
                  timeframe: str, 
                  train: pd.DataFrame, 
                  test: pd.DataFrame,
-                 starting_balance: 100000,
+                 starting_balance:float = 100000,
                  metric: str = 'expectancy', 
                  how: str = 'maximize', 
                  dataset: str = 'train',
@@ -79,8 +79,15 @@ class Optimize:
         print('========== OPTIMIZATION PARAMETERS ==========')
     
     
-    def run_grid_search(self, params: dict, commission: float = 3.5, num_elements: int = 10, spread: int = 1, exclude_time: list = [],
-                        trade_time: list = [], trading_window_start: int = None, trading_window_end: int = None):
+    def run_grid_search(self, 
+                        params: dict, 
+                        commission: float = 3.5, 
+                        num_elements: int = 10, 
+                        spread: int = 1, 
+                        exclude_time: list = [],
+                        trade_time: list = [], 
+                        trading_window_start: int = None, 
+                        trading_window_end: int = None):
         """
         Runs a grid search algorithm using the params dictionary, and creates individual simulation instances, and evaluates its performance
         based on the specified evaluation metric and target.
