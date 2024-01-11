@@ -6,8 +6,29 @@ import MetaTrader5 as mt5
 import matplotlib.pyplot as plt
 plt.style.use('seaborn-v0_8-darkgrid')
 import seaborn as sns
+from statsmodels.stats.stattools import jarque_bera
 
 from tradetestlib.evaluation import Evaluation
+
+
+bg_color_light = '#3A3B3C'
+bg_color = '#242526'
+fg_color = '#B0B3B8'
+
+plt.rcParams['font.size'] = 11 
+plt.rcParams['font.family'] = 'Calibri'
+plt.rcParams['axes.labelcolor'] = fg_color
+plt.rcParams['axes.titlecolor'] = fg_color
+plt.rcParams['axes.facecolor'] = bg_color
+plt.rcParams['xtick.color'] = fg_color
+plt.rcParams['xtick.labelcolor'] = fg_color
+plt.rcParams['ytick.color'] = fg_color
+plt.rcParams['ytick.labelcolor'] = fg_color
+plt.rcParams['grid.color'] = bg_color_light
+plt.rcParams['figure.facecolor'] = bg_color
+plt.rcParams['legend.labelcolor'] = fg_color
+
+
 
 class Simulation:
     """
@@ -130,7 +151,16 @@ class Simulation:
     
     plot_returns_distribution()
         Plots a distribution of cost adjusted profit.
-        
+
+    plot_equity_curve()
+        Plots equity curve and drawdown 
+
+    plot_cumulative_gain_by_month()
+        Plots cumulative gain by month. 
+
+    plot_cumulative_gain_by_year()
+        Plots cumulative gain by year.    
+    
     select_dataset()
         Helper function for selecting dataset. Primarily used for plotting
 
@@ -157,7 +187,7 @@ class Simulation:
                  trade_time: list = [],
                  trading_window_start: int = None, 
                  trading_window_end: int = None,
-                 default_figsize: tuple = (12, 8)
+                 default_figsize: tuple = (14, 6),
                 ):
         
         self.timeframes = ['m1','m5','m15','m30','h1','h4','d1']
@@ -626,7 +656,7 @@ class Simulation:
         data['running_pct_gain'] = (data['balance'].pct_change() * 100).cumsum()
         data['peak_balance'] = data['balance'].cummax()
         data['drawdown'] = (1 - (data['balance'] / data['peak_balance'])) * 100
-        
+
          ## TIME INTERVALS
         data['hour'] = data.index.hour
         data['min'] = data.index.minute
@@ -738,7 +768,7 @@ class Simulation:
         train_build, test_build, combined_build = m(train_grouped), m(test_grouped), m(combined_grouped)
         main_df = pd.concat([train_build,test_build], axis = 1)
         main_df.columns = ['train_net','test_net']
-        main_df.plot(kind = 'bar', figsize = self.default_figsize)
+        main_df.plot(kind = 'bar', figsize = self.default_figsize, alpha=0.6, edgecolor='black')
         
         plt.xlabel(groupby.replace('_',' ').title())
         plt.ylabel(f'Returns {metric.replace("_"," ").title()}')
@@ -803,12 +833,12 @@ class Simulation:
         data = self.select_dataset(dataset)
         sig = data.loc[data['signal'] != 0]
         
-        grouped = sig.groupby(self.grouping(sig))[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum()
+        grouped = (sig.groupby(self.grouping(sig))[['raw_profit','spread_adjusted_profit', 'commission', 'net_profit']].sum() / self.starting_balance) * 100
         
-        grouped.plot(kind = 'bar', figsize = self.default_figsize)
+        grouped.plot(kind = 'bar', figsize = self.default_figsize, alpha=0.6, edgecolor='black')
         plt.legend(labels = ['Raw Profit','Spread Adjusted Profit', 'Transaction Costs', 'Cost Adjusted Profit'])
         plt.title(f'{dataset.title()} Set Transaction Cost Composition')
-        plt.ylabel('Profit ($)')
+        plt.ylabel('Cumulative Gain (%)')
         plt.show()
         
     def plot_interval_filter_comparison(self, dataset:str = 'test'):
@@ -849,7 +879,7 @@ class Simulation:
         elif func == 'std':
             calc = grouped.std()
 
-        calc.plot(kind = 'bar', figsize = self.default_figsize)
+        calc.plot(kind = 'bar', figsize = self.default_figsize, alpha=0.6, edgecolor='black')
         plt.title('Intraday Performance')
         plt.xlabel('Time')
         plt.ylabel(metric.replace('_', ' ').title())
@@ -918,11 +948,81 @@ class Simulation:
         """
         
         data = self.select_dataset(dataset)
+        data_to_plot = (data.loc[(data['signal'] != 0) & (data['valid'] == 1)][['net_profit']] / self.starting_balance) * 100
 
-        plt.figure(figsize = self.default_figsize)
-        sns.distplot(data.loc[(data['signal'] != 0) & (data['valid'] == 1)][['net_profit']])
+        frmt = '{:.3g}'
+        jb, jb_p, skew, kurt=tuple([j.item() for j in jarque_bera(data_to_plot)])
+        jb_string = f'JB: {jb:.2f}\np-value: {frmt.format(jb_p)}\nSkew: {skew:.2f}\nKurt: {kurt:.2f}'
+        
+        sns.displot(data_to_plot, kde=True, legend=False, height=5, aspect=1.5, alpha=0.4)
+
         plt.xlabel('Profit ($)')
-        plt.title(f'{dataset.title()} Set Profit Distribution')
+        plt.title(f'{dataset.title()} Set Profit Distribution\n{jb_string}', fontsize = 12)
+
+    def plot_equity_curve(self):
+        """
+        Plots the equity curve and drawdown percentage.
+        """
+        dataset = self.combined_filtered
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize = (15,8), sharex=True, gridspec_kw={'height_ratios':[2,1]})
+
+        plt.subplots_adjust(left=0.1, right=0.9, top = 0.95, bottom = 0.1, hspace=0.1)
+        fig.suptitle('Equity Curve and Drawdown', color='white')
+
+        bal = dataset['balance']
+        bal.plot(ax=ax1, kind = 'area', color ='springgreen', alpha=0.2, stacked =False)
+        ax1.set_ylabel('Equity ($)')
+
+        dd = dataset['drawdown'] * -1
+        dd.plot(ax=ax2, kind='area', color = 'red', alpha =0.3)
+        ax2.set_ylabel('Drawdown (%)')
+
+        plt.show()
+
+    
+    def plot_cumulative_gain_by_month(self):
+        """
+        Plots cumulative gain by month
+        """
+        dataset = self.combined_filtered.copy()
+        monthly_returns = pd.DataFrame((dataset.groupby([dataset.index.year, dataset.index.month])['net_profit'].sum() / self.starting_balance) * 100)
+        monthly_returns.index = monthly_returns.index.rename(['Year','Mon_int'])
+        months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+        monthly_returns['Month'] = monthly_returns.index.get_level_values('Mon_int').map({
+            k+1:v for k,v in enumerate(months)
+        })
+
+        monthly_returns = monthly_returns.reset_index()
+        monthly_returns['Date'] = monthly_returns['Month'] + " " + monthly_returns['Year'].astype('str')
+        monthly_returns = monthly_returns.set_index('Date')
+        monthly_returns = monthly_returns.drop(['Year','Mon_int','Month'], axis = 1)
+
+        monthly_returns.plot(kind = 'bar', figsize=(14,6), color = 'springgreen', alpha = 0.4, edgecolor = 'black')
+
+        plt.legend(labels = ['Returns (%)'])
+        plt.ylabel('Returns (%)')
+        plt.xlabel('Date')
+        plt.grid(axis='x')
+        plt.title('Cumulative Gain By Month')
+        plt.show()
+
+    def plot_cumulative_gain_by_year(self):
+        """
+        Plots annual gain
+        """
+        dataset = self.combined_filtered.copy()
+        annual_returns = pd.DataFrame((dataset.groupby([dataset.index.year])['net_profit'].sum() / self.starting_balance) * 100)
+        annual_returns.index = annual_returns.index.rename('Year')
+        annual_returns.plot(kind = 'bar', figsize=(14,6), color = 'springgreen', alpha = 0.4, edgecolor = 'black')
+
+        plt.legend(labels = ['Returns (%)'])
+        plt.ylabel('Returns (%)')
+        plt.xlabel('Date')
+        plt.title('Cumulative Gain By Year')
+        plt.grid(axis = 'x')
+        plt.show()
+
         
     def select_dataset(self, dataset: str):
         """
@@ -942,14 +1042,17 @@ class Simulation:
         elif dataset == 'train_filtered':
             return self.train_filtered.copy()
         
-        elif dataset == 'filtered':
+        elif dataset == 'test_filtered':
             return self.test_filtered.copy()
         
         elif dataset == 'combined':
             return self.combined.copy()
         
+        elif dataset == 'combined_filtered':
+            return self.combined_filtered.copy()
+        
         else:
-            raise ValueError('Invalid Dataset type. Use: train, test, combined, train_filtered, test_filtered')
+            raise ValueError('Invalid Dataset type. Use: train, test, train_filtered, test_filtered, combined, combined_filtered')
 
     @staticmethod
     def filter_default(timeframe: str):
