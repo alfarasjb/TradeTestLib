@@ -45,7 +45,7 @@ class Optimize:
                  timeframe: str, 
                  train: pd.DataFrame, 
                  test: pd.DataFrame,
-                 starting_balance: 100000,
+                 starting_balance:float = 100000,
                  metric: str = 'expectancy', 
                  how: str = 'maximize', 
                  dataset: str = 'train',
