@@ -173,10 +173,11 @@ class Evaluation:
         
         
     """
-    def __init__(self, data: pd.DataFrame = None, hyperparameters: dict = None):
+    def __init__(self, data: pd.DataFrame = None, hyperparameters: dict = None, precision: int = 2):
 
         self.data = data 
         self.hyperparameters = hyperparameters
+        self.precision = precision 
         
 
         if (self.data is not None) and (self.hyperparameters is not None):
@@ -280,7 +281,7 @@ class Evaluation:
         
         
         self.sharpe_ratio = self.annualized_sharpe_ratio(data)
-
+        self.sortino_ratio = self.calc_sortino_ratio(data)
         # expectancy
         # (average gain * win%) - (average loss * loss%)
         #self.expectancy = ((self.avg_win_usd * (self.win_rate/100))) - (abs(self.avg_loss_usd) * (1 - (self.win_rate / 100)))
@@ -350,6 +351,7 @@ class Evaluation:
             'short_avg_win' : self.short_avg_win,
             'profit_factor' : self.profit_factor,  
             'sharpe_ratio' : self.sharpe_ratio,
+            'sortino_ratio' : self.sortino_ratio,
             'expectancy' : self.expectancy,
             'cagr' : self.cagr,
             'max_dd_pct' : self.max_dd_pct,
@@ -364,7 +366,7 @@ class Evaluation:
         Evaluation dataframe summarizing alpha performance
         """
         
-        return pd.DataFrame.from_dict(self.evaluation_data, orient = 'index')
+        return pd.DataFrame.from_dict(self.evaluation_data, orient = 'index').round(self.precision)
     
 
     def annualized_sharpe_ratio(self, dataset: pd.DataFrame, target:str = 'net_profit', starting_balance:float = None):
@@ -426,6 +428,32 @@ class Evaluation:
         ann_sharpe = (ann_mu - risk_free_rate) / ann_sigma 
 
         return ann_sharpe
+
+    def calc_sortino_ratio(self, dataset: pd.DataFrame, target:str = 'net_profit', starting_balance:float = None): 
+        data = dataset.copy()
+
+        if not self.index_is_datetime(data):
+            raise TypeError("Dataset index is not DatetimeIndex")
+        
+        if starting_balance is None and not self.target_in_column(dataset, 'balance'):
+            raise ValueError("'balance' not in columns. Enter a starting balance.")
+        
+        if not self.target_in_column(dataset, target):
+            raise ValueError(f"{target} not in columns.")
+        
+        starting_balance = data[:1]['balance'].item() if starting_balance is None else starting_balance
+
+        risk_free_rate = 4 
+
+        # sortino 
+        d = data.loc[data['signal'] != 0][target]
+        annual_mean_returns = d.groupby(d.index.year).sum().mean() / starting_balance * 100
+
+        l = data.loc[(data['signal'] != 0) & (data['net_profit'] < 0)]
+        downside = l.groupby(l.index.year)['net_profit'].sum().std() / starting_balance * 100
+
+        sortino = (annual_mean_returns - risk_free_rate) / downside
+        return sortino 
 
     def backtest_days(self, dataset:pd.DataFrame):
         """
@@ -596,7 +624,7 @@ class Evaluation:
 
         return avg_rrr
 
-    def performance_metrics_df(self, dataset:pd.DataFrame, target:str = 'net_profit', starting_balance:float = None, final_balance:float = None):
+    def performance_metrics_df(self, dataset:pd.DataFrame = None, target:str = 'net_profit', starting_balance:float = None, final_balance:float = None):
         """
         Returns a dataframe of performance metrics. 
 
@@ -620,6 +648,11 @@ class Evaluation:
                 dataframe containing performance metrics.
         """
 
+        if dataset is None and self.data is None: 
+            raise ValueError("No Data.")
+
+        dataset = self.data.copy() if dataset is None else dataset
+
         if not self.target_in_column(dataset, target):
             raise ValueError(f"{target} not in columns.")
         
@@ -634,6 +667,7 @@ class Evaluation:
         cagr = self.compound_annual_growth_rate(dataset, starting_balance, final_balance)
         expectancy = self.expectancy_ratio(dataset, target)
         profit_factor = self.calculated_profit_factor(dataset, target)
+        sortino_ratio = self.calc_sortino_ratio(dataset, target, starting_balance)
 
         avg_rrr = self.average_risk_reward(dataset, target)
 
@@ -641,8 +675,40 @@ class Evaluation:
             'cagr' : cagr,
             'expectancy' : expectancy,
             'sharpe_ratio' : sharpe_ratio,
+            'sortino_ratio' : sortino_ratio,
             'profit_factor' : profit_factor,
             'avg_rrr' : avg_rrr
+        }
+
+        return self.create_df_from_items(items)
+    
+    def descriptive_statistics_df(self, dataset:pd.DataFrame = None, target:str = 'net_profit'):
+
+        if dataset is None and self.data is None: 
+            raise ValueError("No Data.")
+
+        dataset = self.data.copy() if dataset is None else dataset
+
+        if not self.target_in_column(dataset, target):
+            raise ValueError(f"{target} not in columns.")
+        
+        
+
+        d = dataset.loc[dataset['signal'] != 0][target]
+        kurt = d.kurt()
+        skew = d.skew()
+        sdev = d.std()
+        var = d.var()
+        mean = d.mean()
+        coef_var = sdev/mean 
+
+        items = {
+            'mean' : mean, 
+            'var' : var,
+            'sdev' : sdev, 
+            'coef_var' : coef_var,
+            'skew' : skew,
+            'kurt' : kurt
         }
 
         return self.create_df_from_items(items)
@@ -781,4 +847,4 @@ class Evaluation:
         """
         df = pd.DataFrame.from_dict(items, orient='index')
         df.columns = ['Value']
-        return df
+        return df.round(self.precision)
