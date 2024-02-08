@@ -104,6 +104,12 @@ class Simulation:
 
     default_figsize: tuple 
         default figsize for plots
+
+    trading_type: str
+        calculations for close price: interval or inverting
+
+        interval: closes at fixed interval
+        inverting: closes on opposite signal 
     
     Methods
     -------
@@ -188,6 +194,8 @@ class Simulation:
                  trading_window_start: int = None, 
                  trading_window_end: int = None,
                  default_figsize: tuple = (14, 6),
+                 trading_type:str = 'interval',
+                 close_on_eod:bool = True
                 ):
         
         self.timeframes = ['m1','m5','m15','m30','h1','h4','d1']
@@ -243,6 +251,8 @@ class Simulation:
 
         self.filter_by = self.filter_default(self.timeframe) if filter_by is None else filter_by
         self.num_elements = num_elements
+        self.trading_type = trading_type
+        self.close_on_eod = close_on_eod
 
         if self.show_properties:
             self.print_backtest_properties()
@@ -314,7 +324,7 @@ class Simulation:
         self.test_filtered = self.build_dataframe(self.test_raw.copy(), filtered = True)
         self.test_filtered_evaluation = Evaluation(self.test_filtered, self.hyperparameters)
         self.test_filtered_summary = self.summary(self.test_filtered_evaluation, 'test_filtered')
-    
+        
         
         self.combined_filtered = self.build_dataframe(pd.concat([self.train_raw.copy(), self.test_raw.copy()], axis = 0), filtered = True)
         self.combined_filtered_evaluation = Evaluation(self.combined_filtered, self.hyperparameters)
@@ -542,6 +552,15 @@ class Simulation:
         #if len(self.trade_time > 0):
         #    data.loc[)()]
 
+        if self.trading_type == 'inverting':
+            # required column: position
+            data['new_trade'] = 0
+            data.loc[(data['position'] != data['position'].shift(-1)), 'new_trade'] = 1
+            data['new_trade'] = data['new_trade'].shift(1)
+            data = data.dropna()
+            data['signal'] = (data['position'] * data['new_trade']).astype(int)
+
+
         if len(self.exclude_time) > 0:
             data.loc[data.index.strftime('%H:%M').isin(self.exclude_time), 'valid'] = 0
 
@@ -570,24 +589,48 @@ class Simulation:
         
         data['commission'] = np.where(data['signal'] != 0, self.commission, 0)
         
-        data['candle_body'] = data['close'] - data['open']
+        #data['candle_body'] = data['close'] - data['open']
 
         data['lot'] = self.lot
         
-        data['close_price'] = data['close'].shift(periods = -(self.hold_time - 1)) if self.hold_time > 0 else data['close']
-        
-        data['trade_diff'] = 0
-        data.loc[data['signal'] !=0, 'trade_diff'] = abs(data['close_price'] - data['open'])
+        if self.trading_type == 'interval':
+            # affected columns: trade diff, close price
+            data['close_price'] = data['close'].shift(periods = -(self.hold_time - 1)) if self.hold_time > 0 else data['close']
+            data['trade_diff'] = 0
+            data.loc[data['signal'] !=0, 'trade_diff'] = abs(data['close_price'] - data['open'])
 
-        data.loc[(data['close_price'] > data['open']) & (data['signal'] == -1), 'trade_diff']  = data['trade_diff'] * -1
-        data.loc[(data['close_price'] < data['open']) & (data['signal'] == 1), 'trade_diff'] = data['trade_diff'] * -1
+            data.loc[(data['close_price'] > data['open']) & (data['signal'] == -1), 'trade_diff']  = data['trade_diff'] * -1
+            data.loc[(data['close_price'] < data['open']) & (data['signal'] == 1), 'trade_diff'] = data['trade_diff'] * -1
+
+            data['lowest'] = data['low'].rolling(self.hold_time).min().shift(1-self.hold_time)
+            data['highest'] = data['high'].rolling(self.hold_time).max().shift(1-self.hold_time)
+
+        elif self.trading_type == 'inverting':
+            data['dates'] = data.index.date
+            data['close_price'] = np.nan
+            data.loc[(data['position'] != data['position'].shift(-1)), 'close_price'] = data['close']
+
+            if self.close_on_eod:
+                data.loc[(data['dates'] != data['dates'].shift(-1)), 'close_price'] = data['close']            
+
+            data['close_price'] = data['close_price'].bfill()
+            data['close_price'] = data['close_price'] * data['new_trade']
+            
+            data['trade_diff'] = (data['close_price'] - data['close']) * data['new_trade'] * data['position']
+
+            data['count'] = data['new_trade'].cumsum().astype(int)
+            lowest = data.groupby('count')['low'].min().to_dict()
+            highest = data.groupby('count')['high'].max().to_dict()
+
+            data['lowest'] = data.loc[data['signal'] != 0]['count'].map(lowest)
+            data['highest'] = data.loc[data['signal'] != 0]['count'].map(highest)
+
         data['match'] = 0 
         data.loc[data['trade_diff'] > 0, 'match'] = 1
         data.loc[data['trade_diff'] < 0, 'match'] = -1
         
 
-        data['lowest'] = data['low'].rolling(self.hold_time).min().shift(1-self.hold_time)
-        data['highest'] = data['high'].rolling(self.hold_time).max().shift(1-self.hold_time)
+        
         data['lowest_trade_diff'] = np.where(data['signal'] !=0, data['lowest'] - data['open'], 0)
         data['highest_trade_diff'] = np.where(data['signal'] !=0, data['highest'] - data['open'], 0)
         
@@ -610,53 +653,63 @@ class Simulation:
         # CORRECT PROFIT CALCULATION USING MT5 DATA
         #ans = (close_price - open_price) * (1 / pt) * (vol) * (trade_tick)
         
+        def calculate_pl():
         ## === RAW PROFIT === ##
-        data['raw_profit'] = data['trade_diff'] * (1 / self.trade_point) * data['lot'] * self.trade_tick
-        data.loc[(data['raw_profit'] < 0) & (data['raw_profit'] < -self.max_loss), 'raw_profit'] = -self.max_loss
-        data['raw_stop_diff'] = 0
-        data['raw_stop_diff'] = np.where(data['signal'] == 1, abs(data['lowest_trade_diff']), abs(data['raw_stop_diff']))
-        data['raw_stop_diff'] = np.where(data['signal'] == -1, abs(data['highest_trade_diff']), abs(data['raw_stop_diff']))
-        data['raw_dd'] = -abs(data['raw_stop_diff']) * (1 / self.trade_point) * data['lot'] * self.trade_tick
-        data.loc[(data['raw_dd'] < -self.max_loss), 'raw_profit'] = -self.max_loss
-        
-        data['running_raw'] = data['raw_profit'].cumsum()
-        data['raw_balance'] = data['running_raw'] + self.starting_balance
-        data.loc[data.index == data.index[0], 'raw_balance'] = self.starting_balance
-        ## === RAW PROFIT === ##
-        
-        ## === SPREAD ADJUSTED PROFIT === ##
-        data['spread_adj_trade_diff'] = data['trade_diff'] - data['spread_factor'] 
-        data['spread_adjusted_profit'] = (data['spread_adj_trade_diff']) * (1 / self.trade_point) * data['lot'] * self.trade_tick
-        data.loc[(data['spread_adjusted_profit'] < 0) & (data['spread_adjusted_profit'] < -self.max_loss), 'spread_adjusted_profit'] = -self.max_loss
-        data['spread_adj_trade_points'] = abs(data['spread_adj_trade_diff']) * (1 / self.trade_point)
-        data['spread_adj_stop_diff'] = 0
-        data['spread_adj_stop_diff'] = np.where(data['signal'] == 1, abs(data['lowest_trade_diff']), abs(data['spread_adj_stop_diff']))
-        data['spread_adj_stop_diff'] = np.where(data['signal'] == -1, abs(data['highest_trade_diff']), abs(data['spread_adj_stop_diff']))
-        data['spread_adj_dd'] = -abs(data['spread_adj_stop_diff']) * (1 / self.trade_point) * data['lot'] * self.trade_tick
-        data.loc[(data['spread_adj_dd'] < -self.max_loss), 'spread_adjusted_profit'] = -self.max_loss
-        data['running_spread_adj'] = data['spread_adjusted_profit'].cumsum()
-        data['spread_adj_balance'] = data['running_spread_adj'] + self.starting_balance
-        ## === SPREAD ADJUSTED PROFIT === ##
-        
-        ## === NET PROFIT === ##
-        data['net_profit'] = np.where(data['signal'] != 0, data['spread_adjusted_profit'] - self.commission, 0)
-        data['running_profit'] = data['net_profit'].cumsum()
-        data['running_profit_pct'] = data['running_profit'].pct_change() * 100
-        data['balance'] = data['running_profit'] + self.starting_balance
-        data.loc[data.index == data.index[0], 'balance'] = self.starting_balance
-        data['composition'] = ((data['raw_profit'] - data['net_profit']) / data['raw_profit']) * 100
-        ## === NET PROFIT === ##
-        
-        balance_cols = ['balance','spread_adj_balance','raw_balance']
-        
-        for b in balance_cols:
-            data.loc[data[b] < 0, b] = 0
-        
-        
-        data['running_pct_gain'] = (data['balance'].pct_change() * 100).cumsum()
-        data['peak_balance'] = data['balance'].cummax()
-        data['drawdown'] = (1 - (data['balance'] / data['peak_balance'])) * 100
+            
 
+            data['raw_profit'] = data['trade_diff'] * (1 / self.trade_point) * data['lot'] * self.trade_tick
+            data.loc[(data['raw_profit'] < 0) & (data['raw_profit'] < -self.max_loss), 'raw_profit'] = -self.max_loss
+            data['raw_stop_diff'] = 0
+            data['raw_stop_diff'] = np.where(data['signal'] == 1, abs(data['lowest_trade_diff']), abs(data['raw_stop_diff']))
+            data['raw_stop_diff'] = np.where(data['signal'] == -1, abs(data['highest_trade_diff']), abs(data['raw_stop_diff']))
+            data['raw_dd'] = -abs(data['raw_stop_diff']) * (1 / self.trade_point) * data['lot'] * self.trade_tick
+            data.loc[(data['raw_dd'] < -self.max_loss), 'raw_profit'] = -self.max_loss
+            
+            data['running_raw'] = data['raw_profit'].cumsum()
+            data['raw_balance'] = data['running_raw'] + self.starting_balance
+            data.loc[data.index == data.index[0], 'raw_balance'] = self.starting_balance
+            ## === RAW PROFIT === ##
+            
+            ## === SPREAD ADJUSTED PROFIT === ##
+            data['spread_adj_trade_diff'] = data['trade_diff'] - data['spread_factor'] 
+            data['spread_adjusted_profit'] = (data['spread_adj_trade_diff']) * (1 / self.trade_point) * data['lot'] * self.trade_tick
+            data.loc[(data['spread_adjusted_profit'] < 0) & (data['spread_adjusted_profit'] < -self.max_loss), 'spread_adjusted_profit'] = -self.max_loss
+            data['spread_adj_trade_points'] = abs(data['spread_adj_trade_diff']) * (1 / self.trade_point)
+
+            data['spread_adj_stop_diff'] = 0
+            data['spread_adj_stop_diff'] = np.where(data['signal'] == 1, abs(data['lowest_trade_diff']), abs(data['spread_adj_stop_diff']))
+            data['spread_adj_stop_diff'] = np.where(data['signal'] == -1, abs(data['highest_trade_diff']), abs(data['spread_adj_stop_diff']))
+            data['spread_adj_dd'] = -abs(data['spread_adj_stop_diff']) * (1 / self.trade_point) * data['lot'] * self.trade_tick
+            data.loc[(data['spread_adj_dd'] < -self.max_loss), 'spread_adjusted_profit'] = -self.max_loss
+            data['running_spread_adj'] = data['spread_adjusted_profit'].cumsum()
+            data['spread_adj_balance'] = data['running_spread_adj'] + self.starting_balance
+            ## === SPREAD ADJUSTED PROFIT === ##
+            
+            ## === NET PROFIT === ##
+            data['net_profit'] = np.where(data['signal'] != 0, data['spread_adjusted_profit'] - self.commission, 0)
+            data['running_profit'] = data['net_profit'].cumsum()
+            data['running_profit_pct'] = data['running_profit'].pct_change() * 100
+            data['balance'] = data['running_profit'] + self.starting_balance
+            data.loc[data.index == data.index[0], 'balance'] = self.starting_balance
+            data['composition'] = ((data['raw_profit'] - data['net_profit']) / data['raw_profit']) * 100
+            ## === NET PROFIT === ##
+            
+            balance_cols = ['balance','spread_adj_balance','raw_balance']
+            
+            for b in balance_cols:
+                data.loc[data[b] < 0, b] = 0
+            
+            
+            data['running_pct_gain'] = (data['balance'].pct_change() * 100).cumsum()
+            data['peak_balance'] = data['balance'].cummax()
+            data['drawdown'] = (1 - (data['balance'] / data['peak_balance'])) * 100
+            data['gain'] = data['net_profit'] / (data['balance'] - data['net_profit'])
+            
+   
+        # BASE PL. UPDATE IF LOT IS SCALED WITH EQUITY
+        calculate_pl()
+
+   
          ## TIME INTERVALS
         data['hour'] = data.index.hour
         data['min'] = data.index.minute
@@ -688,7 +741,7 @@ class Simulation:
         
         return summary_df
     
-    def plot_returns_comparison(self, dataset: str = 'train', compare: str = 'balance'):
+    def plot_returns_comparison(self, df:pd.DataFrame = None, dataset: str = 'train', compare: str = 'balance'):
         """
         Generates a plot evaluating the overall performance cost of broker commissions. 
         
@@ -702,7 +755,7 @@ class Simulation:
             comparison type: balance or returns
         """
         
-        data = self.select_dataset(dataset)
+        data = self.select_dataset(dataset) if df is None else df
         
         if compare == 'balance':
             compare_data = ['spread_adj_balance','balance','raw_balance']
@@ -802,12 +855,13 @@ class Simulation:
         
         return comparison, self.train_test_df
     
-    def plot_performance_comparison(self):
+    def plot_performance_comparison(self, df:pd.DataFrame = None):
         """
         Generates a figure on In-Sample and Out-Of-Sample Performance comparison, comparing balance and peak balance, as well as
         interval filtered data.
         """
         
+
         test_start = self.test_evaluation.start_date
         start_bal = self.train_evaluation.starting_balance
         plt.figure(figsize=self.default_figsize)
@@ -936,7 +990,7 @@ class Simulation:
         
         return best_results_df[:num_elements]
     
-    def plot_returns_distribution(self, dataset:str = 'train'):
+    def plot_returns_distribution(self, df:pd.DataFrame = None, dataset:str = 'train'):
         """
         Plots a distribution of cost adjusted profit. 
         
@@ -947,36 +1001,40 @@ class Simulation:
         ----------
         """
         
-        data = self.select_dataset(dataset)
+        data = self.select_dataset(dataset) if df is None else df
         data_to_plot = (data.loc[(data['signal'] != 0) & (data['valid'] == 1)][['net_profit']] / self.starting_balance) * 100
 
         frmt = '{:.3g}'
         jb, jb_p, skew, kurt=tuple([j.item() for j in jarque_bera(data_to_plot)])
-        jb_string = f'JB: {jb:.2f}\np-value: {frmt.format(jb_p)}\nSkew: {skew:.2f}\nKurt: {kurt:.2f}'
+        jb_string = f'p-value: {frmt.format(jb_p)} Skew: {skew:.2f} Kurt: {kurt:.2f}'
         
         sns.displot(data_to_plot, kde=True, legend=False, height=5, aspect=1.5, alpha=0.4)
 
-        plt.xlabel('Profit ($)')
+        plt.xlabel('Gain (%)')
         plt.title(f'{dataset.title()} Set Profit Distribution\n{jb_string}', fontsize = 12)
 
-    def plot_equity_curve(self):
+    def plot_equity_curve(self, dataset:pd.DataFrame = None):
         """
         Plots the equity curve and drawdown percentage.
         """
-        dataset = self.combined_filtered
+        dataset = self.combined_filtered if dataset is None else dataset
 
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize = (15,8), sharex=True, gridspec_kw={'height_ratios':[2,1]})
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize = (15,8), sharex=True, gridspec_kw={'height_ratios':[3, 1, 1]})
 
         plt.subplots_adjust(left=0.1, right=0.9, top = 0.95, bottom = 0.1, hspace=0.1)
         fig.suptitle('Equity Curve and Drawdown', color='white')
 
         bal = dataset['balance']
-        bal.plot(ax=ax1, kind = 'area', color ='springgreen', alpha=0.2, stacked =False)
+        bal.plot(ax=ax1, color ='springgreen', alpha = 0.7, stacked =False)
         ax1.set_ylabel('Equity ($)')
 
         dd = dataset['drawdown'] * -1
         dd.plot(ax=ax2, kind='area', color = 'red', alpha =0.3)
         ax2.set_ylabel('Drawdown (%)')
+
+        lots = dataset['lot']
+        lots.plot(ax= ax3, color = 'dodgerblue', alpha = 0.8)
+        ax3.set_ylabel('Lot Size')
 
         plt.show()
 
@@ -986,7 +1044,9 @@ class Simulation:
         Plots cumulative gain by month
         """
         dataset = self.combined_filtered.copy()
-        monthly_returns = pd.DataFrame((dataset.groupby([dataset.index.year, dataset.index.month])['net_profit'].sum() / self.starting_balance) * 100)
+        monthly_returns = dataset.groupby([dataset.index.year, dataset.index.month])[['net_profit']].sum()
+        monthly_returns['equity'] = self.starting_balance + monthly_returns['net_profit'].cumsum()
+        monthly_returns['gain'] = ((monthly_returns['net_profit'] / monthly_returns['equity'].shift(1).fillna(self.starting_balance))) * 100
         monthly_returns.index = monthly_returns.index.rename(['Year','Mon_int'])
         months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
         monthly_returns['Month'] = monthly_returns.index.get_level_values('Mon_int').map({
@@ -998,7 +1058,7 @@ class Simulation:
         monthly_returns = monthly_returns.set_index('Date')
         monthly_returns = monthly_returns.drop(['Year','Mon_int','Month'], axis = 1)
 
-        monthly_returns.plot(kind = 'bar', figsize=(14,6), color = 'springgreen', alpha = 0.4, edgecolor = 'black')
+        monthly_returns['gain'].plot(kind = 'bar', figsize=(14,6), color = 'springgreen', alpha = 0.4, edgecolor = 'black')
 
         plt.legend(labels = ['Returns (%)'])
         plt.ylabel('Returns (%)')
@@ -1007,14 +1067,19 @@ class Simulation:
         plt.title('Cumulative Gain By Month')
         plt.show()
 
+        
+
     def plot_cumulative_gain_by_year(self):
         """
         Plots annual gain
         """
         dataset = self.combined_filtered.copy()
-        annual_returns = pd.DataFrame((dataset.groupby([dataset.index.year])['net_profit'].sum() / self.starting_balance) * 100)
+        annual_returns = dataset.groupby([dataset.index.year])[['net_profit']].sum()
+        annual_returns['equity'] = self.starting_balance + annual_returns['net_profit'].cumsum()
+        annual_returns['gain'] = ((annual_returns['net_profit'] / annual_returns['equity'].shift(1).fillna(self.starting_balance))) * 100
+
         annual_returns.index = annual_returns.index.rename('Year')
-        annual_returns.plot(kind = 'bar', figsize=(14,6), color = 'springgreen', alpha = 0.4, edgecolor = 'black')
+        annual_returns['gain'].plot(kind = 'bar', figsize=(14,6), color = 'springgreen', alpha = 0.4, edgecolor = 'black')
 
         plt.legend(labels = ['Returns (%)'])
         plt.ylabel('Returns (%)')
