@@ -195,7 +195,11 @@ class Simulation:
                  trading_window_end: int = None,
                  default_figsize: tuple = (14, 6),
                  trading_type:str = 'interval',
-                 close_on_eod:bool = True
+                 close_on_eod:bool = True,
+                 contract_size:int = None, 
+                 trade_point: float=None, 
+                 trade_tick: float = None,
+                 close_hour:int = None
                 ):
         
         self.timeframes = ['m1','m5','m15','m30','h1','h4','d1']
@@ -237,7 +241,7 @@ class Simulation:
         self.hold_time = hold_time
         self.orders = orders
         
-        self.contract_size, self.trade_point, self.trade_tick, self.spread = self.request_mt5_symbol_info(self.symbol)
+        self.contract_size, self.trade_point, self.trade_tick, self.spread = self.request_mt5_symbol_info(self.symbol, contract_size, trade_point, trade_tick)
         self.spread = spread if spread is not None else self.spread
         
         self.exclude_time = exclude_time # time in format "HH:MM" to exclude trading activity 
@@ -253,6 +257,7 @@ class Simulation:
         self.num_elements = num_elements
         self.trading_type = trading_type
         self.close_on_eod = close_on_eod
+        self.close_hour = close_hour
 
         if self.show_properties:
             self.print_backtest_properties()
@@ -350,19 +355,24 @@ class Simulation:
         print('---------- BACKTEST PROPERTIES ----------')
 
     @staticmethod
-    def request_mt5_symbol_info(symbol):
+    def request_mt5_symbol_info(symbol, inp_contract_size, inp_trade_point, inp_trade_tick):
         try:
             element = mt5.symbol_info(symbol)._asdict()
-            contract_size = element['trade_contract_size']
-            trade_point = element['point'] # num ticks
-            trade_tick = element['trade_tick_value'] # value per tick in USD per 1 standard lot
+            contract_size = element['trade_contract_size'] if inp_contract_size is None else inp_contract_size
+            trade_point = element['point'] if inp_trade_point is None else inp_trade_point # num ticks
+            trade_tick = element['trade_tick_value'] if inp_trade_tick is None else inp_trade_tick # value per tick in USD per 1 standard lot
             spread = element['spread'] if element['spread'] != 0 else 1# approximation calculated from weekend spread
 
             return contract_size, trade_point, trade_tick, spread
         
         except AttributeError:
             print('MT5 is not running. Run mt5.initialize()')
-            return 100000, 0.00001, 1, 1 
+            contract_size = 100000 if inp_contract_size is None else inp_contract_size 
+            trade_point = 0.00001 if inp_trade_point is None else inp_trade_point 
+            trade_tick = 1 if inp_trade_tick is None else inp_trade_tick 
+            spread = 1
+
+            return contract_size, trade_point, trade_tick, spread
             
         
     def build_dataframe(self, data: pd.DataFrame = None, filtered:bool = False):
@@ -521,7 +531,7 @@ class Simulation:
         if data is None:
             return 
         
-        if filtered:
+        if filtered and self.timeframe not in self.htf:
             trading_hours = self.best_interval_by_cost_delta(self.num_elements).index.tolist()
             trading_hours = [t.strftime('%H:%M') for t in trading_hours]
         else:
@@ -595,7 +605,19 @@ class Simulation:
         
         if self.trading_type == 'interval':
             # affected columns: trade diff, close price
-            data['close_price'] = data['close'].shift(periods = -(self.hold_time - 1)) if self.hold_time > 0 else data['close']
+            data['dates'] = data.index.date
+            
+            if self.close_on_eod:
+                if self.close_hour is None:
+                    data['close_price'] = np.nan 
+                    data.loc[(data['dates'] != data['dates'].shift(-1)), 'close_price'] = data['close']
+                    data['close_price'] = data['close_price'].bfill()
+                else: 
+                    data['close_price'] = np.nan 
+                    data.loc[data.index.strftime("%H:%M") == f"{self.close_hour}:00", 'close_price'] = data['close'].shift(1)
+                    data['close_price'] = data['close_price'].bfill()
+            else:
+                data['close_price'] = data['close'].shift(periods = -(self.hold_time - 1)) if self.hold_time > 0 else data['close']
             data['trade_diff'] = 0
             data.loc[data['signal'] !=0, 'trade_diff'] = abs(data['close_price'] - data['open'])
 
@@ -656,7 +678,10 @@ class Simulation:
         def calculate_pl():
         ## === RAW PROFIT === ##
             
-
+            data['sl_ticks'] = (self.max_loss) / ((1 / self.trade_point) * (data['lot']) * (self.trade_tick))
+            data['sl_price'] = 0 
+            data.loc[data['signal'] == 1, 'sl_price'] = data['open'] - data['sl_ticks']
+            data.loc[data['signal'] == -1, 'sl_price'] = data['open'] + data['sl_ticks']
             data['raw_profit'] = data['trade_diff'] * (1 / self.trade_point) * data['lot'] * self.trade_tick
             data.loc[(data['raw_profit'] < 0) & (data['raw_profit'] < -self.max_loss), 'raw_profit'] = -self.max_loss
             data['raw_stop_diff'] = 0
@@ -1088,7 +1113,26 @@ class Simulation:
         plt.grid(axis = 'x')
         plt.show()
 
+    
+    def plot_heatmap(self, target='net_profit', data = None):
+
+        dataset = self.combined_filtered.copy() if data is None else data.copy()
+        returns=dataset[[target]]
+        grouped = returns.groupby([returns.index.year, returns.index.month])[[target]].sum()
+        grouped.index = grouped.index.rename(names=['year','month'])
+        grouped = grouped.reset_index()
+
+        matrix = grouped.pivot_table(values=target, index = grouped['year'], columns = grouped['month'])
+        matrix.columns = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+        matrix = matrix / self.starting_balance
         
+        plt.figure(figsize=self.default_figsize)
+
+        sns.heatmap(matrix, annot = True, square=True,fmt='.2%', cbar=False)
+        plt.title(f'{self.symbol} Returns')
+        plt.xlabel('Month')
+        plt.ylabel('Year')
+            
     def select_dataset(self, dataset: str):
         """
         Helper function for selecting dataset. Used for plotting figures
